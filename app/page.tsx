@@ -1,5 +1,5 @@
 import { ConnectButton } from "@rainbow-me/rainbowkit";
-import { ConnectionInfo } from "./(components)/connection-info";
+import { ConnectionInfo } from "@/components/connection-info";
 
 export default function Home() {
     return (
