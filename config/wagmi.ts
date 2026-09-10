@@ -1,4 +1,4 @@
-import { createConfig, http } from "wagmi";
+import { cookieStorage, createConfig, createStorage, http } from "wagmi";
 import { mainnet, anvil } from "wagmi/chains";
 
 export const config = createConfig({
@@ -8,4 +8,5 @@ export const config = createConfig({
         [anvil.id]: http(),
     },
     ssr: true,
+    storage: createStorage({ storage: cookieStorage }),
 });
