@@ -1,12 +1,9 @@
-import { cookieStorage, createConfig, createStorage, http } from "wagmi";
-import { mainnet, anvil } from "wagmi/chains";
+import { cookieStorage, createConfig, createStorage } from "wagmi";
+import { supportedChains, transports } from "./chains";
 
 export const config = createConfig({
-    chains: [mainnet, anvil],
-    transports: {
-        [mainnet.id]: http(),
-        [anvil.id]: http(),
-    },
+    chains: supportedChains,
+    transports: transports,
     ssr: true,
     storage: createStorage({ storage: cookieStorage }),
 });
