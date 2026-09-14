@@ -5,6 +5,7 @@ import { Address } from "viem";
 import { getContractAddresses } from "@/config/contracts";
 import { getTokenList } from "@/config/tokens";
 import { TokenInfo } from "./token-info";
+import { AmountInput } from "./amount-input";
 
 export const ChainScopedContent = ({
     address,
@@ -13,6 +14,7 @@ export const ChainScopedContent = ({
     address: Address;
     chainId: number;
 }) => {
+    const [bigIntValue, setBigIntValue] = useState<bigint | "">("");
     const tokenList = getTokenList(chainId);
     const contractAddress = getContractAddresses(chainId);
     const [selectedTokenAddress, setSelectedTokenAddress] = useState<
@@ -54,6 +56,13 @@ export const ChainScopedContent = ({
                         spenderAddress={contractAddress.swap_router_02}
                         tokenAddress={token.address}
                         decimals={token.decimals}
+                    />
+                    <AmountInput
+                        decimals={token.decimals}
+                        ownerAddress={address}
+                        tokenAddress={token.address}
+                        bigIntValue={bigIntValue}
+                        setBigIntValue={setBigIntValue}
                     />
                 </>
             )}
