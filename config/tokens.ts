@@ -2,7 +2,7 @@
 import { Address } from "viem";
 import { isSupportedChain, SupportedChainsType } from "./chains";
 
-type TokenInfo = {
+export type TokenInfo = {
     symbol: "WETH" | "USDC" | "USDT" | "DAI";
     address: Address;
     decimals: number;

@@ -1,12 +1,23 @@
+"use client";
+
+import { useConnection } from "wagmi";
 import { ConnectButton } from "@rainbow-me/rainbowkit";
 import { ConnectionInfo } from "@/components/connection-info";
+import { ChainScopedContent } from "@/components/chain-scoped-content";
 
 export default function Home() {
+    const connection = useConnection();
     return (
         <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
             <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
                 <ConnectButton />
                 <ConnectionInfo />
+                {connection.status === "connected" && (
+                    <ChainScopedContent
+                        address={connection.address}
+                        chainId={connection.chainId}
+                    />
+                )}
             </main>
         </div>
     );
