@@ -4,8 +4,10 @@ import { useState } from "react";
 import { Address } from "viem";
 import { getContractAddresses } from "@/config/contracts";
 import { getTokenList } from "@/config/tokens";
+import { useDebounce } from "@/hooks/useDebounce";
 import { TokenInfo } from "./token-info";
 import { AmountInput } from "./amount-input";
+import { QuoteOutput } from "./quote-output";
 
 export const ChainScopedContent = ({
     address,
@@ -23,6 +25,7 @@ export const ChainScopedContent = ({
     const token = tokenList.find(
         (token) => token.address === selectedTokenAddress,
     );
+    const debouncedBigIntValue = useDebounce(bigIntValue);
 
     return (
         <>
@@ -63,6 +66,15 @@ export const ChainScopedContent = ({
                         tokenAddress={token.address}
                         bigIntValue={bigIntValue}
                         setBigIntValue={setBigIntValue}
+                    />
+                    <QuoteOutput
+                        tokenIn={token.address}
+                        amountIn={
+                            debouncedBigIntValue === ""
+                                ? 0n
+                                : debouncedBigIntValue
+                        }
+                        chainId={chainId}
                     />
                 </>
             )}
