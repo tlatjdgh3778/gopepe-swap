@@ -28,6 +28,7 @@ export const useSingleQuote = ({
         args: [{ tokenIn, tokenOut, amountIn, fee, sqrtPriceLimitX96 }],
         query: {
             enabled: amountIn !== 0n && tokenIn !== tokenOut,
+            refetchInterval: 1000 * 10, // 10 초
         },
     });
 
