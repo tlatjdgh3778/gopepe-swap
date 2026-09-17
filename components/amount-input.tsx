@@ -1,6 +1,7 @@
 import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { Dispatch, SetStateAction, useState } from "react";
 import { Address, formatUnits, parseUnits } from "viem";
+import { SlippagePresets } from "./slippage-presets";
 
 /**
  * ### 얼마나 토큰을 변환할지 입력하는 곳
@@ -16,12 +17,16 @@ export const AmountInput = ({
     ownerAddress,
     bigIntValue,
     setBigIntValue,
+    slippageBps,
+    setSlippageBps,
 }: {
     decimals: number;
     tokenAddress: Address;
     ownerAddress: Address;
     bigIntValue: bigint | "";
     setBigIntValue: Dispatch<SetStateAction<bigint | "">>;
+    slippageBps: number;
+    setSlippageBps: Dispatch<SetStateAction<number>>;
 }) => {
     const [value, setValue] = useState("");
     const tokenBalance = useTokenBalance({ ownerAddress, tokenAddress });
@@ -65,6 +70,10 @@ export const AmountInput = ({
             >
                 MAX
             </button>
+            <SlippagePresets
+                slippageBps={slippageBps}
+                setSlippageBps={setSlippageBps}
+            />
             <input
                 type="number"
                 className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1"

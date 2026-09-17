@@ -16,6 +16,8 @@ export const ChainScopedContent = ({
     address: Address;
     chainId: number;
 }) => {
+    /// 100 = 1%, 50 = 0.5%
+    const [slippageBps, setSlippageBps] = useState(100);
     const [bigIntValue, setBigIntValue] = useState<bigint | "">("");
     const tokenList = getTokenList(chainId);
     const contractAddress = getContractAddresses(chainId);
@@ -66,6 +68,8 @@ export const ChainScopedContent = ({
                         tokenAddress={token.address}
                         bigIntValue={bigIntValue}
                         setBigIntValue={setBigIntValue}
+                        slippageBps={slippageBps}
+                        setSlippageBps={setSlippageBps}
                     />
                     <QuoteOutput
                         tokenIn={token.address}
@@ -75,6 +79,7 @@ export const ChainScopedContent = ({
                                 : debouncedBigIntValue
                         }
                         chainId={chainId}
+                        slippageBps={slippageBps}
                     />
                 </>
             )}
