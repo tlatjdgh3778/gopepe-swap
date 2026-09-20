@@ -8,6 +8,7 @@ import { useDebounce } from "@/hooks/useDebounce";
 import { TokenInfo } from "./token-info";
 import { AmountInput } from "./amount-input";
 import { QuoteOutput } from "./quote-output";
+import { SwapButton } from "./swap-button";
 
 export const ChainScopedContent = ({
     address,
@@ -27,6 +28,7 @@ export const ChainScopedContent = ({
     const token = tokenList.find(
         (token) => token.address === selectedTokenAddress,
     );
+    const tokenOut = tokenList.find((token) => token.symbol === "USDC");
     const debouncedBigIntValue = useDebounce(bigIntValue);
 
     return (
@@ -71,15 +73,28 @@ export const ChainScopedContent = ({
                         slippageBps={slippageBps}
                         setSlippageBps={setSlippageBps}
                     />
-                    <QuoteOutput
-                        tokenIn={token.address}
+                    {tokenOut && token.address !== tokenOut.address && (
+                        <QuoteOutput
+                            tokenIn={token.address}
+                            tokenOut={tokenOut}
+                            amountIn={
+                                debouncedBigIntValue === ""
+                                    ? 0n
+                                    : debouncedBigIntValue
+                            }
+                            chainId={chainId}
+                            slippageBps={slippageBps}
+                        />
+                    )}
+                    <SwapButton
+                        ownerAddress={address}
+                        tokenAddress={token.address}
+                        spenderAddress={contractAddress.swap_router_02}
                         amountIn={
                             debouncedBigIntValue === ""
                                 ? 0n
                                 : debouncedBigIntValue
                         }
-                        chainId={chainId}
-                        slippageBps={slippageBps}
                     />
                 </>
             )}
