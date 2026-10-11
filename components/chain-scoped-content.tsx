@@ -11,93 +11,94 @@ import { QuoteOutput } from "./quote-output";
 import { SwapButton } from "./swap-button";
 
 export const ChainScopedContent = ({
-    address,
-    chainId,
+  address,
+  chainId,
 }: {
-    address: Address;
-    chainId: number;
+  address: Address;
+  chainId: number;
 }) => {
-    /// 100 = 1%, 50 = 0.5%
-    const [slippageBps, setSlippageBps] = useState(100);
-    const [bigIntValue, setBigIntValue] = useState<bigint | "">("");
-    const tokenList = getTokenList(chainId);
-    const contractAddress = getContractAddresses(chainId);
-    const [selectedTokenAddress, setSelectedTokenAddress] = useState<
-        null | `0x${string}`
-    >(null);
-    const token = tokenList.find(
-        (token) => token.address === selectedTokenAddress,
-    );
-    const tokenOut = tokenList.find((token) => token.symbol === "USDC");
-    const debouncedBigIntValue = useDebounce(bigIntValue);
+  /// 100 = 1%, 50 = 0.5%
+  const [slippageBps, setSlippageBps] = useState(100);
+  const [bigIntValue, setBigIntValue] = useState<bigint | "">("");
+  const tokenList = getTokenList(chainId);
+  const contractAddress = getContractAddresses(chainId);
+  const [selectedTokenAddress, setSelectedTokenAddress] = useState<
+    null | `0x${string}`
+  >(null);
+  const token = tokenList.find(
+    (token) => token.address === selectedTokenAddress,
+  );
+  const tokenOut = tokenList.find((token) => token.symbol === "USDC");
+  const debouncedBigIntValue = useDebounce(bigIntValue);
 
-    return (
+  return (
+    <>
+      <form>
+        {tokenList.map((token) => {
+          return (
+            <div key={token.address}>
+              <input
+                type="radio"
+                id={token.address}
+                name={"token-select"}
+                value={token.address}
+                onChange={(e) => {
+                  const value = e.target.value as `0x${string}`;
+                  setSelectedTokenAddress(value);
+                }}
+              />
+              <label htmlFor={token.address}>{token.symbol}</label>
+            </div>
+          );
+        })}
+      </form>
+      {token && (
         <>
-            <form>
-                {tokenList.map((token) => {
-                    return (
-                        <div key={token.address}>
-                            <input
-                                type="radio"
-                                id={token.address}
-                                name={"token-select"}
-                                value={token.address}
-                                onChange={(e) => {
-                                    const value = e.target
-                                        .value as `0x${string}`;
-                                    setSelectedTokenAddress(value);
-                                }}
-                            />
-                            <label htmlFor={token.address}>
-                                {token.symbol}
-                            </label>
-                        </div>
-                    );
-                })}
-            </form>
-            {token && (
-                <>
-                    <p>선택한 토큰: {token.symbol}</p>
-                    <TokenInfo
-                        ownerAddress={address}
-                        spenderAddress={contractAddress.swap_router_02}
-                        tokenAddress={token.address}
-                        decimals={token.decimals}
-                    />
-                    <AmountInput
-                        decimals={token.decimals}
-                        ownerAddress={address}
-                        tokenAddress={token.address}
-                        bigIntValue={bigIntValue}
-                        setBigIntValue={setBigIntValue}
-                        slippageBps={slippageBps}
-                        setSlippageBps={setSlippageBps}
-                    />
-                    {tokenOut && token.address !== tokenOut.address && (
-                        <QuoteOutput
-                            tokenIn={token.address}
-                            tokenOut={tokenOut}
-                            amountIn={
-                                debouncedBigIntValue === ""
-                                    ? 0n
-                                    : debouncedBigIntValue
-                            }
-                            chainId={chainId}
-                            slippageBps={slippageBps}
-                        />
-                    )}
-                    <SwapButton
-                        ownerAddress={address}
-                        tokenAddress={token.address}
-                        spenderAddress={contractAddress.swap_router_02}
-                        amountIn={
-                            debouncedBigIntValue === ""
-                                ? 0n
-                                : debouncedBigIntValue
-                        }
-                    />
-                </>
-            )}
+          <p>선택한 토큰: {token.symbol}</p>
+          <TokenInfo
+            ownerAddress={address}
+            spenderAddress={contractAddress.swap_router_02}
+            tokenAddress={token.address}
+            decimals={token.decimals}
+          />
+          <AmountInput
+            decimals={token.decimals}
+            ownerAddress={address}
+            tokenAddress={token.address}
+            bigIntValue={bigIntValue}
+            setBigIntValue={setBigIntValue}
+            slippageBps={slippageBps}
+            setSlippageBps={setSlippageBps}
+          />
+          {tokenOut && token.address !== tokenOut.address && (
+            <>
+              <QuoteOutput
+                tokenIn={token.address}
+                tokenOut={tokenOut}
+                amountIn={
+                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                }
+                chainId={chainId}
+                slippageBps={slippageBps}
+              />
+              <SwapButton
+                ownerAddress={address}
+                tokenAddress={token.address}
+                spenderAddress={contractAddress.swap_router_02}
+                amountIn={
+                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                }
+                swapRouterAddress={contractAddress.swap_router_02}
+                tokenIn={token.address}
+                tokenOut={tokenOut.address}
+                recipient={address}
+                chainId={chainId}
+                slippageBps={slippageBps}
+              />
+            </>
+          )}
         </>
-    );
+      )}
+    </>
+  );
 };
