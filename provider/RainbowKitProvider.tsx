@@ -4,10 +4,6 @@ import { RainbowKitProvider as RainbowKitProviderImpl } from "@rainbow-me/rainbo
 /**
  * Wraps the application with the RainbowKitProvider to provide wallet connection functionality.
  */
-export function RainbowKitProviders({
-    children,
-}: {
-    children: React.ReactNode;
-}) {
-    return <RainbowKitProviderImpl>{children}</RainbowKitProviderImpl>;
+export function RainbowKitProviders({ children }: { children: React.ReactNode }) {
+  return <RainbowKitProviderImpl>{children}</RainbowKitProviderImpl>;
 }

@@ -9,49 +9,39 @@ import { TokenInfo } from "./token-info";
 import { AmountInput } from "./amount-input";
 import { QuoteOutput } from "./quote-output";
 import { SwapButton } from "./swap-button";
+import { TokenRadioGroup } from "./token-radio-group";
 
-export const ChainScopedContent = ({
-  address,
-  chainId,
-}: {
-  address: Address;
-  chainId: number;
-}) => {
+export const ChainScopedContent = ({ address, chainId }: { address: Address; chainId: number }) => {
   /// 100 = 1%, 50 = 0.5%
   const [slippageBps, setSlippageBps] = useState(100);
   const [bigIntValue, setBigIntValue] = useState<bigint | "">("");
   const tokenList = getTokenList(chainId);
   const contractAddress = getContractAddresses(chainId);
-  const [selectedTokenAddress, setSelectedTokenAddress] = useState<
-    null | `0x${string}`
-  >(null);
-  const token = tokenList.find(
-    (token) => token.address === selectedTokenAddress,
+  const [selectedTokenAddress, setSelectedTokenAddress] = useState<null | `0x${string}`>(null);
+  // 기본값은 USDC — 기존 WETH → USDC 흐름이 그대로 유지되도록
+  const [selectedTokenOutAddress, setSelectedTokenOutAddress] = useState<null | `0x${string}`>(
+    () => tokenList.find((token) => token.symbol === "USDC")?.address ?? null,
   );
-  const tokenOut = tokenList.find((token) => token.symbol === "USDC");
+  const token = tokenList.find((token) => token.address === selectedTokenAddress);
+  const tokenOut = tokenList.find((token) => token.address === selectedTokenOutAddress);
   const debouncedBigIntValue = useDebounce(bigIntValue);
 
   return (
     <>
-      <form>
-        {tokenList.map((token) => {
-          return (
-            <div key={token.address}>
-              <input
-                type="radio"
-                id={token.address}
-                name={"token-select"}
-                value={token.address}
-                onChange={(e) => {
-                  const value = e.target.value as `0x${string}`;
-                  setSelectedTokenAddress(value);
-                }}
-              />
-              <label htmlFor={token.address}>{token.symbol}</label>
-            </div>
-          );
-        })}
-      </form>
+      <p>보낼 토큰</p>
+      <TokenRadioGroup
+        name="token-in"
+        tokenList={tokenList}
+        selectedAddress={selectedTokenAddress}
+        onSelect={setSelectedTokenAddress}
+      />
+      <p>받을 토큰</p>
+      <TokenRadioGroup
+        name="token-out"
+        tokenList={tokenList}
+        selectedAddress={selectedTokenOutAddress}
+        onSelect={setSelectedTokenOutAddress}
+      />
       {token && (
         <>
           <p>선택한 토큰: {token.symbol}</p>
@@ -75,9 +65,7 @@ export const ChainScopedContent = ({
               <QuoteOutput
                 tokenIn={token.address}
                 tokenOut={tokenOut}
-                amountIn={
-                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
-                }
+                amountIn={debouncedBigIntValue === "" ? 0n : debouncedBigIntValue}
                 chainId={chainId}
                 slippageBps={slippageBps}
               />
@@ -85,9 +73,7 @@ export const ChainScopedContent = ({
                 ownerAddress={address}
                 tokenAddress={token.address}
                 spenderAddress={contractAddress.swap_router_02}
-                amountIn={
-                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
-                }
+                amountIn={debouncedBigIntValue === "" ? 0n : debouncedBigIntValue}
                 swapRouterAddress={contractAddress.swap_router_02}
                 tokenIn={token.address}
                 tokenOut={tokenOut.address}

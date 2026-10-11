@@ -8,15 +8,15 @@ import { State, WagmiProvider as WagmiProviderImpl } from "wagmi";
  * Wraps the application with the WagmiProvider.
  */
 export function WagmiProvider({
-    initialState,
-    children,
+  initialState,
+  children,
 }: {
-    initialState: State | undefined;
-    children: ReactNode;
+  initialState: State | undefined;
+  children: ReactNode;
 }) {
-    return (
-        <WagmiProviderImpl config={config} initialState={initialState}>
-            {children}
-        </WagmiProviderImpl>
-    );
+  return (
+    <WagmiProviderImpl config={config} initialState={initialState}>
+      {children}
+    </WagmiProviderImpl>
+  );
 }

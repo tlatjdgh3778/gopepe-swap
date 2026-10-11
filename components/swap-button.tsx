@@ -126,12 +126,11 @@ const ApproveButton = ({
   disabled?: boolean;
   onApproved: () => void;
 }) => {
-  const { onApprove, isPending, isError, isSuccess, hash, receipt } =
-    useApprove({
-      tokenAddress,
-      spenderAddress,
-      amount,
-    });
+  const { onApprove, isPending, isError, isSuccess, hash, receipt } = useApprove({
+    tokenAddress,
+    spenderAddress,
+    amount,
+  });
   useEffect(() => {
     if (receipt.isSuccess) {
       onApproved();
@@ -170,9 +169,7 @@ const ApproveButton = ({
         <p>생성된 트랜잭션 {hash}(</p>
         {receipt.isPending && <p>블록 생성 중...</p>}
         {receipt.isError && <p>트랜잭션 취소됨</p>}
-        {receipt.isSuccess && (
-          <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>
-        )}
+        {receipt.isSuccess && <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>}
       </div>
     );
   }
@@ -254,9 +251,7 @@ const RealSwapButton = ({
         <p>생성된 트랜잭션 {hash}</p>
         {receipt.isPending && <p>블록 생성 중...</p>}
         {receipt.isError && <p>트랜잭션 취소됨</p>}
-        {receipt.isSuccess && (
-          <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>
-        )}
+        {receipt.isSuccess && <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>}
       </div>
     );
   }
