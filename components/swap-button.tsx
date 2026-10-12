@@ -6,7 +6,7 @@ import { useApprove } from "@/hooks/useApprove";
 import { useMultipleQuote } from "@/hooks/useMultipleQuote";
 import { useSwap } from "@/hooks/useSwap";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
-import { isUserRejected } from "@/lib/error";
+import { isUserRejected, parseRevertReason } from "@/lib/error";
 import { getSlippagedQuote } from "@/lib/slippage";
 import { useEffect } from "react";
 import { Address } from "viem";
@@ -160,12 +160,13 @@ const ApproveButton = ({
   }
   if (isError) {
     const userRejected = isUserRejected(error);
+    const revertRejected = parseRevertReason(error);
     return (
       <button
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
         onClick={reset}
       >
-        {userRejected ? "사용자 거부" : "승인에러"}
+        {userRejected ? "사용자 거부" : (revertRejected ?? "승인에러")}
       </button>
     );
   }
@@ -309,12 +310,13 @@ const RealSwapButton = ({
   }
   if (isError) {
     const userRejected = isUserRejected(error);
+    const revertRejected = parseRevertReason(error);
     return (
       <button
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
         onClick={reset}
       >
-        {userRejected ? "사용자 거부" : "스왑실패"}
+        {userRejected ? "사용자 거부" : (revertRejected ?? "스왑실패")}
       </button>
     );
   }
