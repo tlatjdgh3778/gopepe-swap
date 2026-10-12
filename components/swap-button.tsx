@@ -6,6 +6,7 @@ import { useApprove } from "@/hooks/useApprove";
 import { useMultipleQuote } from "@/hooks/useMultipleQuote";
 import { useSwap } from "@/hooks/useSwap";
 import { useTokenBalance } from "@/hooks/useTokenBalance";
+import { isUserRejected } from "@/lib/error";
 import { getSlippagedQuote } from "@/lib/slippage";
 import { useEffect } from "react";
 import { Address } from "viem";
@@ -126,11 +127,12 @@ const ApproveButton = ({
   disabled?: boolean;
   onApproved: () => void;
 }) => {
-  const { onApprove, isPending, isError, isSuccess, hash, receipt } = useApprove({
-    tokenAddress,
-    spenderAddress,
-    amount,
-  });
+  const { onApprove, isPending, isError, error, isSuccess, hash, receipt } =
+    useApprove({
+      tokenAddress,
+      spenderAddress,
+      amount,
+    });
   useEffect(() => {
     if (receipt.isSuccess) {
       onApproved();
@@ -148,12 +150,13 @@ const ApproveButton = ({
     );
   }
   if (isError) {
+    const userRejected = isUserRejected(error);
     return (
       <button
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
-        disabled={disabled}
+        disabled
       >
-        승인 에러
+        {userRejected ? "사용자 거부" : "승인에러"}
       </button>
     );
   }
@@ -167,9 +170,14 @@ const ApproveButton = ({
           승인됨 (트랜잭션이 네트워크로 전송됨)
         </button>
         <p>생성된 트랜잭션 {hash}(</p>
-        {receipt.isPending && <p>블록 생성 중...</p>}
-        {receipt.isError && <p>트랜잭션 취소됨</p>}
-        {receipt.isSuccess && <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>}
+        {receipt.status === "success" &&
+          (receipt.data.status === "success" ? (
+            <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>
+          ) : receipt.data.status === "reverted" ? (
+            <p>revert 됨</p>
+          ) : null)}
+        {receipt.status === "error" && <p>{receipt.error.message}</p>}
+        {receipt.status === "pending" && <p>블록 생성 중...</p>}
       </div>
     );
   }
@@ -205,15 +213,16 @@ const RealSwapButton = ({
   disabled?: boolean;
   onSwapped: () => void;
 }) => {
-  const { onSwap, isPending, isSuccess, isError, receipt, hash } = useSwap({
-    swapRouterAddress: spenderAddress,
-    tokenIn,
-    tokenOut,
-    fee,
-    recipient,
-    amountIn,
-    amountOutMinimum,
-  });
+  const { onSwap, isPending, isSuccess, isError, error, receipt, hash } =
+    useSwap({
+      swapRouterAddress: spenderAddress,
+      tokenIn,
+      tokenOut,
+      fee,
+      recipient,
+      amountIn,
+      amountOutMinimum,
+    });
   const tokenBalance = useTokenBalance({
     tokenAddress: tokenIn,
     ownerAddress: recipient,
@@ -249,19 +258,25 @@ const RealSwapButton = ({
           스왑완료
         </button>
         <p>생성된 트랜잭션 {hash}</p>
-        {receipt.isPending && <p>블록 생성 중...</p>}
-        {receipt.isError && <p>트랜잭션 취소됨</p>}
-        {receipt.isSuccess && <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>}
+        {receipt.status === "success" &&
+          (receipt.data.status === "success" ? (
+            <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>
+          ) : receipt.data.status === "reverted" ? (
+            <p>revert 됨</p>
+          ) : null)}
+        {receipt.status === "error" && <p>{receipt.error.message}</p>}
+        {receipt.status === "pending" && <p>블록 생성 중...</p>}
       </div>
     );
   }
   if (isError) {
+    const userRejected = isUserRejected(error);
     return (
       <button
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
         disabled
       >
-        스왑실패
+        {userRejected ? "사용자 거부" : "스왑실패"}
       </button>
     );
   }
