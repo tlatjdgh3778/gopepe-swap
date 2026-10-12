@@ -1,5 +1,9 @@
 import { Address, erc20Abi } from "viem";
-import { useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+import {
+  useSimulateContract,
+  useWaitForTransactionReceipt,
+  useWriteContract,
+} from "wagmi";
 
 export const useApprove = ({
   tokenAddress,
@@ -10,6 +14,16 @@ export const useApprove = ({
   spenderAddress: Address;
   amount: bigint;
 }) => {
+  const { data: simulateContract, ...simulateRest } = useSimulateContract({
+    address: tokenAddress,
+    abi: erc20Abi,
+    functionName: "approve",
+    args: [spenderAddress, amount],
+    query: {
+      enabled: amount !== 0n,
+    },
+  });
+
   const { mutate: approve, data: hash, ...rest } = useWriteContract();
 
   const receipt = useWaitForTransactionReceipt({
@@ -20,13 +34,8 @@ export const useApprove = ({
   });
 
   const onApprove = () => {
-    approve({
-      address: tokenAddress,
-      abi: erc20Abi,
-      functionName: "approve",
-      args: [spenderAddress, amount],
-    });
+    approve(simulateContract!.request);
   };
 
-  return { onApprove, hash, ...rest, receipt };
+  return { onApprove, hash, ...rest, receipt, simulate: simulateRest };
 };

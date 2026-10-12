@@ -127,12 +127,21 @@ const ApproveButton = ({
   disabled?: boolean;
   onApproved: () => void;
 }) => {
-  const { onApprove, isPending, isError, error, isSuccess, hash, receipt } =
-    useApprove({
-      tokenAddress,
-      spenderAddress,
-      amount,
-    });
+  const {
+    onApprove,
+    isPending,
+    isError,
+    error,
+    isSuccess,
+    hash,
+    receipt,
+    reset,
+    simulate,
+  } = useApprove({
+    tokenAddress,
+    spenderAddress,
+    amount,
+  });
   useEffect(() => {
     if (receipt.isSuccess) {
       onApproved();
@@ -154,7 +163,7 @@ const ApproveButton = ({
     return (
       <button
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
-        disabled
+        onClick={reset}
       >
         {userRejected ? "사용자 거부" : "승인에러"}
       </button>
@@ -179,6 +188,26 @@ const ApproveButton = ({
         {receipt.status === "error" && <p>{receipt.error.message}</p>}
         {receipt.status === "pending" && <p>블록 생성 중...</p>}
       </div>
+    );
+  }
+  if (simulate.isPending) {
+    return (
+      <button
+        className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
+        disabled={disabled}
+      >
+        확인 중...
+      </button>
+    );
+  }
+  if (simulate.isError) {
+    return (
+      <button
+        className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
+        disabled
+      >
+        {"승인 불가 (시뮬레이션 실패)"}
+      </button>
     );
   }
   return (
@@ -213,16 +242,25 @@ const RealSwapButton = ({
   disabled?: boolean;
   onSwapped: () => void;
 }) => {
-  const { onSwap, isPending, isSuccess, isError, error, receipt, hash } =
-    useSwap({
-      swapRouterAddress: spenderAddress,
-      tokenIn,
-      tokenOut,
-      fee,
-      recipient,
-      amountIn,
-      amountOutMinimum,
-    });
+  const {
+    onSwap,
+    isPending,
+    isSuccess,
+    isError,
+    error,
+    receipt,
+    hash,
+    reset,
+    simulate,
+  } = useSwap({
+    swapRouterAddress: spenderAddress,
+    tokenIn,
+    tokenOut,
+    fee,
+    recipient,
+    amountIn,
+    amountOutMinimum,
+  });
   const tokenBalance = useTokenBalance({
     tokenAddress: tokenIn,
     ownerAddress: recipient,
@@ -274,9 +312,29 @@ const RealSwapButton = ({
     return (
       <button
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
-        disabled
+        onClick={reset}
       >
         {userRejected ? "사용자 거부" : "스왑실패"}
+      </button>
+    );
+  }
+  if (simulate.isPending) {
+    return (
+      <button
+        className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
+        disabled={disabled}
+      >
+        확인 중...
+      </button>
+    );
+  }
+  if (simulate.isError) {
+    return (
+      <button
+        className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
+        disabled
+      >
+        {"스왑 불가 (시뮬레이션 실패)"}
       </button>
     );
   }
