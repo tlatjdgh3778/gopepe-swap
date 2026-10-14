@@ -44,12 +44,13 @@ export const QuoteOutput = ({
           </p>
           <p>fee: {fee / 10000}%</p>
           <p>
-            슬리피지 적용 {slippageBps / 100}%: {formatUnits(slippagedQuote, tokenOutDecimals)}{" "}
-            {tokenOut.symbol}
+            슬리피지 적용 {slippageBps / 100}%:{" "}
+            {formatUnits(slippagedQuote, tokenOutDecimals)} {tokenOut.symbol}
           </p>
         </div>
       );
     case "pending":
+      if (amountIn === 0n) return <span>금액을 입력하세요.</span>;
       return <span>quote 계산 중 ...</span>;
     default:
       return <span>quote 계산 오류</span>;

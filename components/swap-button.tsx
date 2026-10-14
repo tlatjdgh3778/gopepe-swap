@@ -92,6 +92,24 @@ export const SwapButton = ({
           />
         );
       } else {
+        if (amountIn === 0n)
+          return (
+            <button
+              className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
+              disabled
+            >
+              금액을 입력하세요.
+            </button>
+          );
+        if (contract.status === "error")
+          return (
+            <button
+              className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
+              disabled
+            >
+              quote를 가져올 수 없어요
+            </button>
+          );
         return (
           <button
             className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
