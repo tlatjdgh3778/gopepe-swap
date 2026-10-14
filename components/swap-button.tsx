@@ -1,6 +1,7 @@
 // 승인 필요 판정
 // approve 실행
 
+import { TokenInfo } from "@/config/tokens";
 import { useAllowance } from "@/hooks/useAllowance";
 import { useApprove } from "@/hooks/useApprove";
 import { useMultipleQuote } from "@/hooks/useMultipleQuote";
@@ -9,7 +10,12 @@ import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { isUserRejected, parseRevertReason } from "@/lib/error";
 import { getSlippagedQuote } from "@/lib/slippage";
 import { useEffect } from "react";
-import { Address } from "viem";
+import { Address, decodeEventLog, erc20Abi, formatUnits } from "viem";
+
+type SwapResult = {
+  hash: string;
+  received: string | null;
+};
 
 // swap 실행
 export const SwapButton = ({
@@ -23,6 +29,7 @@ export const SwapButton = ({
   recipient,
   chainId,
   slippageBps,
+  onSwapSuccess,
 }: {
   tokenAddress: Address;
   ownerAddress: Address;
@@ -30,10 +37,11 @@ export const SwapButton = ({
   amountIn: bigint;
   swapRouterAddress: Address;
   tokenIn: Address;
-  tokenOut: Address;
+  tokenOut: TokenInfo;
   recipient: Address;
   chainId: number;
   slippageBps: number;
+  onSwapSuccess: (result: SwapResult) => void;
 }) => {
   const allowance = useAllowance({
     tokenAddress,
@@ -42,7 +50,7 @@ export const SwapButton = ({
   });
   const contract = useMultipleQuote({
     tokenIn,
-    tokenOut,
+    tokenOut: tokenOut.address,
     amountIn,
     chainId,
   });
@@ -77,7 +85,10 @@ export const SwapButton = ({
             recipient={recipient}
             amountIn={amountIn}
             amountOutMinimum={slippagedQuote}
-            onSwapped={() => allowance.refetch()}
+            onSwapped={(result: SwapResult) => {
+              allowance.refetch();
+              onSwapSuccess(result);
+            }}
           />
         );
       } else {
@@ -235,13 +246,13 @@ const RealSwapButton = ({
 }: {
   spenderAddress: Address;
   tokenIn: Address;
-  tokenOut: Address;
+  tokenOut: TokenInfo;
   fee: number;
   recipient: Address;
   amountIn: bigint;
   amountOutMinimum: bigint;
   disabled?: boolean;
-  onSwapped: () => void;
+  onSwapped: (result: SwapResult) => void;
 }) => {
   const {
     onSwap,
@@ -256,7 +267,7 @@ const RealSwapButton = ({
   } = useSwap({
     swapRouterAddress: spenderAddress,
     tokenIn,
-    tokenOut,
+    tokenOut: tokenOut.address,
     fee,
     recipient,
     amountIn,
@@ -268,14 +279,27 @@ const RealSwapButton = ({
   });
 
   useEffect(() => {
-    if (receipt.isSuccess) {
+    if (receipt.isSuccess && receipt.data.status === "success") {
       // TokenInfo 의 잔액
       // allowance
-      // QuoteOutput의 quote
-      onSwapped();
+      // QuoteOutput의 quote\
+      const tokenOutLog = receipt.data?.logs.find(
+        (log) => log.address.toLowerCase() === tokenOut.address.toLowerCase(),
+      );
+
+      const realquote = tokenOutLog
+        ? formatUnits(
+            decodeEventLog({ abi: erc20Abi, ...tokenOutLog }).args.value,
+            tokenOut.decimals,
+          )
+        : null;
+      onSwapped({
+        hash: receipt.data.transactionHash,
+        received: realquote,
+      });
       tokenBalance.refetch();
     }
-  }, [receipt.isSuccess]);
+  }, [receipt.isSuccess, receipt.data?.status]);
 
   if (isPending) {
     return (
@@ -288,6 +312,17 @@ const RealSwapButton = ({
     );
   }
   if (isSuccess) {
+    const tokenOutLog = receipt.data?.logs.find(
+      (log) => log.address.toLowerCase() === tokenOut.address.toLowerCase(),
+    );
+
+    const realquote = tokenOutLog
+      ? formatUnits(
+          decodeEventLog({ abi: erc20Abi, ...tokenOutLog }).args.value,
+          tokenOut.decimals,
+        )
+      : null;
+
     return (
       <div>
         <button
@@ -299,7 +334,13 @@ const RealSwapButton = ({
         <p>생성된 트랜잭션 {hash}</p>
         {receipt.status === "success" &&
           (receipt.data.status === "success" ? (
-            <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>
+            <div>
+              <p>생성된 네트워크 블록 {receipt.data.blockHash}</p>
+              <p>
+                실제 받은 금액 {realquote}
+                {tokenOut.symbol}
+              </p>
+            </div>
           ) : receipt.data.status === "reverted" ? (
             <p>revert 됨</p>
           ) : null)}
