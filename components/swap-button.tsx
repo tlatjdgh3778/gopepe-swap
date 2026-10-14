@@ -183,7 +183,7 @@ const ApproveButton = ({
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
         disabled={disabled}
       >
-        승인 중...
+        지갑에서 확인해주세요.
       </button>
     );
   }
@@ -325,7 +325,7 @@ const RealSwapButton = ({
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1 hover:bg-foreground/10"
         disabled
       >
-        스왑중...
+        지갑에서 확인해주세요.
       </button>
     );
   }
