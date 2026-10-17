@@ -18,7 +18,11 @@ export const TokenInfo = ({
     <div>
       <div>
         토큰 잔액 :
-        <TokenBalance tokenAddress={tokenAddress} ownerAddress={ownerAddress} decimals={decimals} />
+        <TokenBalance
+          tokenAddress={tokenAddress}
+          ownerAddress={ownerAddress}
+          decimals={decimals}
+        />
       </div>
       <div>
         allowance :

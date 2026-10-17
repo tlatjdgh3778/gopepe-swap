@@ -2,6 +2,7 @@ import { Address, formatUnits } from "viem";
 import { TokenInfo } from "@/config/tokens";
 import { useMultipleQuote } from "@/hooks/useMultipleQuote";
 import { getSlippagedQuote } from "@/lib/slippage";
+import { getContractAddresses } from "@/config/contracts";
 
 export const QuoteOutput = ({
   tokenIn,
@@ -16,8 +17,11 @@ export const QuoteOutput = ({
   chainId: number;
   slippageBps: number;
 }) => {
+  const contractAddress = getContractAddresses(chainId);
   const tokenOutDecimals = tokenOut.decimals;
-  const tokenOutAddress = tokenOut.address;
+  const tokenOutAddress = tokenOut.isNative
+    ? contractAddress.weth_9 // ETH → WETH 주소로 치환
+    : tokenOut.address;
 
   const contract = useMultipleQuote({
     tokenIn,

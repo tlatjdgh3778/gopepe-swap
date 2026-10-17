@@ -1,6 +1,7 @@
 // 승인 필요 판정
 // approve 실행
 
+import { getContractAddresses } from "@/config/contracts";
 import { TokenInfo } from "@/config/tokens";
 import { useAllowance } from "@/hooks/useAllowance";
 import { useApprove } from "@/hooks/useApprove";
@@ -43,6 +44,11 @@ export const SwapButton = ({
   slippageBps: number;
   onSwapSuccess: (result: SwapResult) => void;
 }) => {
+  const contractAddress = getContractAddresses(chainId);
+  const tokenOutAddress = tokenOut.isNative
+    ? contractAddress.weth_9 // ETH → WETH 주소로 치환
+    : tokenOut.address;
+
   const allowance = useAllowance({
     tokenAddress,
     ownerAddress,
@@ -50,7 +56,7 @@ export const SwapButton = ({
   });
   const contract = useMultipleQuote({
     tokenIn,
-    tokenOut: tokenOut.address,
+    tokenOut: tokenOutAddress,
     amountIn,
     chainId,
   });
@@ -81,6 +87,7 @@ export const SwapButton = ({
             spenderAddress={swapRouterAddress}
             tokenIn={tokenIn}
             tokenOut={tokenOut}
+            tokenOutAddress={tokenOutAddress}
             fee={contract.fee}
             recipient={recipient}
             amountIn={amountIn}
@@ -255,6 +262,7 @@ const RealSwapButton = ({
   spenderAddress,
   tokenIn,
   tokenOut,
+  tokenOutAddress,
   fee,
   recipient,
   amountIn,
@@ -265,6 +273,7 @@ const RealSwapButton = ({
   spenderAddress: Address;
   tokenIn: Address;
   tokenOut: TokenInfo;
+  tokenOutAddress: Address;
   fee: number;
   recipient: Address;
   amountIn: bigint;
@@ -285,7 +294,7 @@ const RealSwapButton = ({
   } = useSwap({
     swapRouterAddress: spenderAddress,
     tokenIn,
-    tokenOut: tokenOut.address,
+    tokenOut: tokenOutAddress,
     fee,
     recipient,
     amountIn,
@@ -302,7 +311,7 @@ const RealSwapButton = ({
       // allowance
       // QuoteOutput의 quote\
       const tokenOutLog = receipt.data?.logs.find(
-        (log) => log.address.toLowerCase() === tokenOut.address.toLowerCase(),
+        (log) => log.address.toLowerCase() === tokenOutAddress.toLowerCase(),
       );
 
       const realquote = tokenOutLog
@@ -331,7 +340,7 @@ const RealSwapButton = ({
   }
   if (isSuccess) {
     const tokenOutLog = receipt.data?.logs.find(
-      (log) => log.address.toLowerCase() === tokenOut.address.toLowerCase(),
+      (log) => log.address.toLowerCase() === tokenOutAddress.toLowerCase(),
     );
 
     const realquote = tokenOutLog

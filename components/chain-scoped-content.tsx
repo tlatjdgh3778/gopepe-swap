@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { Address } from "viem";
 import { getContractAddresses } from "@/config/contracts";
-import { getTokenList } from "@/config/tokens";
+import { getTokenList, TokenInfo as TokenInfoType } from "@/config/tokens";
 import { useDebounce } from "@/hooks/useDebounce";
 import { TokenInfo } from "./token-info";
 import { AmountInput } from "./amount-input";
@@ -30,18 +30,16 @@ export const ChainScopedContent = ({
   const [resetAmountInputKey, setResetAmountInputKey] = useState(0);
   const tokenList = getTokenList(chainId);
   const contractAddress = getContractAddresses(chainId);
-  const [selectedTokenAddress, setSelectedTokenAddress] = useState<
-    null | `0x${string}`
+  const [selectedTokenSymbol, setSelectedTokenSymbol] = useState<
+    null | TokenInfoType["symbol"]
   >(null);
   // 기본값은 USDC — 기존 WETH → USDC 흐름이 그대로 유지되도록
-  const [selectedTokenOutAddress, setSelectedTokenOutAddress] = useState<
-    null | `0x${string}`
-  >(() => tokenList.find((token) => token.symbol === "USDC")?.address ?? null);
-  const token = tokenList.find(
-    (token) => token.address === selectedTokenAddress,
-  );
+  const [selectedTokenOutSymbol, setSelectedTokenOutSymbol] = useState<
+    null | TokenInfoType["symbol"]
+  >(() => tokenList.find((token) => token.symbol === "USDC")?.symbol ?? null);
+  const token = tokenList.find((token) => token.symbol === selectedTokenSymbol);
   const tokenOut = tokenList.find(
-    (token) => token.address === selectedTokenOutAddress,
+    (token) => token.symbol === selectedTokenOutSymbol,
   );
   const debouncedBigIntValue = useDebounce(bigIntValue);
 
@@ -57,17 +55,17 @@ export const ChainScopedContent = ({
       <TokenRadioGroup
         name="token-in"
         tokenList={tokenList}
-        selectedAddress={selectedTokenAddress}
-        onSelect={setSelectedTokenAddress}
+        selectedSymbol={selectedTokenSymbol}
+        onSelect={setSelectedTokenSymbol}
       />
       <p>받을 토큰</p>
       <TokenRadioGroup
         name="token-out"
         tokenList={tokenList}
-        selectedAddress={selectedTokenOutAddress}
-        onSelect={setSelectedTokenOutAddress}
+        selectedSymbol={selectedTokenOutSymbol}
+        onSelect={setSelectedTokenOutSymbol}
       />
-      {token && (
+      {token && !token.isNative && (
         <>
           <p>선택한 토큰: {token.symbol}</p>
           <TokenInfo
@@ -86,42 +84,44 @@ export const ChainScopedContent = ({
             slippageBps={slippageBps}
             setSlippageBps={setSlippageBps}
           />
-          {tokenOut && token.address !== tokenOut.address && (
-            <>
-              <QuoteOutput
-                tokenIn={token.address}
-                tokenOut={tokenOut}
-                amountIn={
-                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
-                }
-                chainId={chainId}
-                slippageBps={slippageBps}
-              />
-              <SwapButton
-                ownerAddress={address}
-                tokenAddress={token.address}
-                spenderAddress={contractAddress.swap_router_02}
-                amountIn={
-                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
-                }
-                swapRouterAddress={contractAddress.swap_router_02}
-                tokenIn={token.address}
-                tokenOut={tokenOut}
-                recipient={address}
-                chainId={chainId}
-                slippageBps={slippageBps}
-                onSwapSuccess={onSwapSuccess}
-              />
-              {swapResult && (
-                <div>
-                  <p>{swapResult.hash}</p>
-                  <p>
-                    {swapResult.received} {tokenOut.symbol}
-                  </p>
-                </div>
-              )}
-            </>
-          )}
+          {tokenOut &&
+            !tokenOut.isNative &&
+            token.address !== tokenOut.address && (
+              <>
+                <QuoteOutput
+                  tokenIn={token.address}
+                  tokenOut={tokenOut}
+                  amountIn={
+                    debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                  }
+                  chainId={chainId}
+                  slippageBps={slippageBps}
+                />
+                <SwapButton
+                  ownerAddress={address}
+                  tokenAddress={token.address}
+                  spenderAddress={contractAddress.swap_router_02}
+                  amountIn={
+                    debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                  }
+                  swapRouterAddress={contractAddress.swap_router_02}
+                  tokenIn={token.address}
+                  tokenOut={tokenOut}
+                  recipient={address}
+                  chainId={chainId}
+                  slippageBps={slippageBps}
+                  onSwapSuccess={onSwapSuccess}
+                />
+                {swapResult && (
+                  <div>
+                    <p>{swapResult.hash}</p>
+                    <p>
+                      {swapResult.received} {tokenOut.symbol}
+                    </p>
+                  </div>
+                )}
+              </>
+            )}
         </>
       )}
     </>
