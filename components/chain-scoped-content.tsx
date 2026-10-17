@@ -6,10 +6,12 @@ import { getContractAddresses } from "@/config/contracts";
 import { getTokenList, TokenInfo as TokenInfoType } from "@/config/tokens";
 import { useDebounce } from "@/hooks/useDebounce";
 import { TokenInfo } from "./token-info";
-import { AmountInput } from "./amount-input";
 import { QuoteOutput } from "./quote-output";
 import { SwapButton } from "./swap-button";
 import { TokenRadioGroup } from "./token-radio-group";
+import { NativeTokenInfo } from "./native-token-info";
+import { Erc20AmountInput } from "./erc-20-amount-input";
+import { NativeAmountInput } from "./native-amount-input";
 
 type SwapResult = {
   hash: string;
@@ -65,65 +67,80 @@ export const ChainScopedContent = ({
         selectedSymbol={selectedTokenOutSymbol}
         onSelect={setSelectedTokenOutSymbol}
       />
-      {token && !token.isNative && (
-        <>
-          <p>선택한 토큰: {token.symbol}</p>
-          <TokenInfo
-            ownerAddress={address}
-            spenderAddress={contractAddress.swap_router_02}
-            tokenAddress={token.address}
-            decimals={token.decimals}
-          />
-          <AmountInput
-            key={resetAmountInputKey}
-            decimals={token.decimals}
-            ownerAddress={address}
-            tokenAddress={token.address}
-            bigIntValue={bigIntValue}
-            setBigIntValue={setBigIntValue}
-            slippageBps={slippageBps}
-            setSlippageBps={setSlippageBps}
-          />
-          {tokenOut &&
-            !tokenOut.isNative &&
-            token.address !== tokenOut.address && (
-              <>
-                <QuoteOutput
-                  tokenIn={token.address}
-                  tokenOut={tokenOut}
-                  amountIn={
-                    debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
-                  }
-                  chainId={chainId}
-                  slippageBps={slippageBps}
-                />
-                <SwapButton
-                  ownerAddress={address}
-                  tokenAddress={token.address}
-                  spenderAddress={contractAddress.swap_router_02}
-                  amountIn={
-                    debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
-                  }
-                  swapRouterAddress={contractAddress.swap_router_02}
-                  tokenIn={token.address}
-                  tokenOut={tokenOut}
-                  recipient={address}
-                  chainId={chainId}
-                  slippageBps={slippageBps}
-                  onSwapSuccess={onSwapSuccess}
-                />
-                {swapResult && (
-                  <div>
-                    <p>{swapResult.hash}</p>
-                    <p>
-                      {swapResult.received} {tokenOut.symbol}
-                    </p>
-                  </div>
-                )}
-              </>
-            )}
-        </>
-      )}
+      {token &&
+        (!token.isNative ? (
+          <>
+            <p>선택한 토큰: {token.symbol}</p>
+            <TokenInfo
+              ownerAddress={address}
+              spenderAddress={contractAddress.swap_router_02}
+              tokenAddress={token.address}
+              decimals={token.decimals}
+            />
+            <Erc20AmountInput
+              key={resetAmountInputKey}
+              decimals={token.decimals}
+              ownerAddress={address}
+              tokenAddress={token.address}
+              bigIntValue={bigIntValue}
+              setBigIntValue={setBigIntValue}
+              slippageBps={slippageBps}
+              setSlippageBps={setSlippageBps}
+            />
+            {tokenOut &&
+              !tokenOut.isNative &&
+              token.address !== tokenOut.address && (
+                <>
+                  <QuoteOutput
+                    tokenIn={token.address}
+                    tokenOut={tokenOut}
+                    amountIn={
+                      debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                    }
+                    chainId={chainId}
+                    slippageBps={slippageBps}
+                  />
+                  <SwapButton
+                    ownerAddress={address}
+                    tokenAddress={token.address}
+                    spenderAddress={contractAddress.swap_router_02}
+                    amountIn={
+                      debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                    }
+                    swapRouterAddress={contractAddress.swap_router_02}
+                    tokenIn={token.address}
+                    tokenOut={tokenOut}
+                    recipient={address}
+                    chainId={chainId}
+                    slippageBps={slippageBps}
+                    onSwapSuccess={onSwapSuccess}
+                  />
+                  {swapResult && (
+                    <div>
+                      <p>{swapResult.hash}</p>
+                      <p>
+                        {swapResult.received} {tokenOut.symbol}
+                      </p>
+                    </div>
+                  )}
+                </>
+              )}
+          </>
+        ) : (
+          <>
+            <p>선택한 토큰: {token.symbol}</p>
+            <NativeTokenInfo address={address} />
+            <NativeAmountInput
+              key={resetAmountInputKey}
+              decimals={token.decimals}
+              ownerAddress={address}
+              bigIntValue={bigIntValue}
+              setBigIntValue={setBigIntValue}
+              slippageBps={slippageBps}
+              setSlippageBps={setSlippageBps}
+            />
+          </>
+        ))}
     </>
   );
 };

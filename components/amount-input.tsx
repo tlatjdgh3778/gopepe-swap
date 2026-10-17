@@ -1,6 +1,5 @@
-import { useTokenBalance } from "@/hooks/useTokenBalance";
 import { Dispatch, SetStateAction, useState } from "react";
-import { Address, formatUnits, parseUnits } from "viem";
+import { formatUnits, parseUnits } from "viem";
 import { SlippagePresets } from "./slippage-presets";
 
 /**
@@ -13,26 +12,23 @@ import { SlippagePresets } from "./slippage-presets";
  */
 export const AmountInput = ({
   decimals,
-  tokenAddress,
-  ownerAddress,
   bigIntValue,
   setBigIntValue,
   slippageBps,
   setSlippageBps,
+  balance,
 }: {
   decimals: number;
-  tokenAddress: Address;
-  ownerAddress: Address;
   bigIntValue: bigint | "";
   setBigIntValue: Dispatch<SetStateAction<bigint | "">>;
   slippageBps: number;
   setSlippageBps: Dispatch<SetStateAction<number>>;
+  balance: bigint | undefined;
 }) => {
   const [value, setValue] = useState("");
-  const tokenBalance = useTokenBalance({ ownerAddress, tokenAddress });
 
   const isOverBalance =
-    bigIntValue !== "" && tokenBalance.status === "success" && bigIntValue > tokenBalance.data;
+    bigIntValue !== "" && balance !== undefined && bigIntValue > balance;
 
   const onChangeAmount = (value: string) => {
     setValue(value);
@@ -45,11 +41,11 @@ export const AmountInput = ({
   };
 
   const onClickMaxButton = (_e: React.MouseEvent<HTMLElement, MouseEvent>) => {
-    // tokenBalance 값 (bigint)을 표시용 데이터 (string) 으로 변경한다.
-    if (tokenBalance.status === "success") {
-      const value = formatUnits(tokenBalance.data, decimals);
+    // balance 값 (bigint)을 표시용 데이터 (string) 으로 변경한다.
+    if (balance !== undefined) {
+      const value = formatUnits(balance, decimals);
       setValue(value);
-      setBigIntValue(tokenBalance.data);
+      setBigIntValue(balance);
     } else {
       setValue("");
     }
@@ -66,7 +62,10 @@ export const AmountInput = ({
       >
         MAX
       </button>
-      <SlippagePresets slippageBps={slippageBps} setSlippageBps={setSlippageBps} />
+      <SlippagePresets
+        slippageBps={slippageBps}
+        setSlippageBps={setSlippageBps}
+      />
       <input
         type="number"
         className="bg-background text-foreground border border-foreground/20 rounded px-2 py-1"
