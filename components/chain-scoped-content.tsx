@@ -44,6 +44,7 @@ export const ChainScopedContent = ({
     (token) => token.symbol === selectedTokenOutSymbol,
   );
   const debouncedBigIntValue = useDebounce(bigIntValue);
+  const wethAddress = getContractAddresses(chainId).weth_9;
 
   const onSwapSuccess = (result: SwapResult) => {
     setBigIntValue("");
@@ -139,6 +140,18 @@ export const ChainScopedContent = ({
               slippageBps={slippageBps}
               setSlippageBps={setSlippageBps}
             />
+            {/* 받을 토큰이 ERC20 일 때*/}
+            {tokenOut && !tokenOut.isNative && (
+              <QuoteOutput
+                tokenIn={wethAddress}
+                tokenOut={tokenOut}
+                amountIn={
+                  debouncedBigIntValue === "" ? 0n : debouncedBigIntValue
+                }
+                chainId={chainId}
+                slippageBps={slippageBps}
+              />
+            )}
           </>
         ))}
     </>

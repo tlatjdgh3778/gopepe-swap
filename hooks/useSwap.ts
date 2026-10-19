@@ -14,6 +14,7 @@ export const useSwap = ({
   recipient,
   amountIn,
   amountOutMinimum,
+  isNativeIn,
 }: {
   swapRouterAddress: Address;
   tokenIn: Address;
@@ -22,6 +23,7 @@ export const useSwap = ({
   recipient: Address;
   amountIn: bigint;
   amountOutMinimum: bigint;
+  isNativeIn?: boolean;
 }) => {
   const { data: simulateContract, ...simulateRest } = useSimulateContract({
     address: swapRouterAddress,
@@ -38,6 +40,7 @@ export const useSwap = ({
         sqrtPriceLimitX96: 0n,
       },
     ],
+    value: isNativeIn ? amountIn : undefined,
     query: {
       enabled: amountIn !== 0n,
     },
