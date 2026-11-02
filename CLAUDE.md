@@ -17,7 +17,7 @@ bun run build         # 프로덕션 빌드
 bun run lint          # oxlint
 bun run format:check  # oxfmt 검사
 bun run format        # oxfmt 적용
-bunx tsc --noEmit     # 타입 검사
+bun run typecheck     # 라우트 타입 생성 후 타입 검사
 bun run test          # Vitest 전체 1회 실행
 bun run test:watch    # Vitest watch 모드
 bun run test:e2e      # Playwright E2E (빌드 후 서버를 띄워 실행)
@@ -36,6 +36,10 @@ bun run test:e2e -g "테스트 이름"             # Playwright 이름 일치
 - Playwright를 처음 실행하기 전에 `bunx playwright install chromium`으로 브라우저를 설치한다. 시스템 라이브러리가 없다는 오류가 나면 `bunx playwright install-deps chromium`을 실행한다.
 - `localhost:3000`에 이미 서버가 떠 있으면 Playwright는 빌드 없이 그 서버를 재사용한다(CI 제외).
 - wagmi `mock` 커넥터 + anvil 포크 E2E 설정은 F1(`wallet-chains`)에서 추가한다.
+
+## CI
+
+PR과 `main` 푸시마다 GitHub Actions(`.github/workflows/ci.yml`)가 `check`(format, lint, typecheck, test, build)와 `e2e`(Playwright) 잡을 실행한다.
 
 ## 브랜치와 커밋
 
