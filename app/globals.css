@@ -1,26 +1,144 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
-}
+@custom-variant dark (&:is(.dark *));
 
+/*
+ * 색 유틸리티는 모두 디자인 토큰(:root)을 가리킨다.
+ * 디자인 토큰 `--accent`·`--muted`는 shadcn의 같은 이름 변수와 뜻이 다르므로
+ * shadcn 유틸리티(`bg-accent`, `bg-muted`, `text-muted-foreground`)는 아래에서 디자인 토큰으로 직접 매핑한다.
+ * - `bg-primary`/`text-primary` = 민트(`--accent`), `text-primary-foreground` = `--accent-ink`
+ * - `bg-accent`·`bg-muted` = `--raised`(메뉴 강조·hover 배경)
+ * - `text-muted-foreground` = `--muted`
+ */
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
+  --font-sans:
+    var(--font-geist-sans), "Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", system-ui,
+    sans-serif;
   --font-mono: var(--font-geist-mono);
+  --font-heading: var(--font-sans);
+
+  /* 디자인 토큰 유틸리티 */
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-field: var(--field);
+  --color-raised: var(--raised);
+  --color-text: var(--text);
+  --color-faint: var(--faint);
+  --color-accent-ink: var(--accent-ink);
+  --color-error: var(--error);
+
+  /* shadcn 유틸리티 → 디자인 토큰 */
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar: var(--sidebar);
+  --color-chart-5: var(--chart-5);
+  --color-chart-4: var(--chart-4);
+  --color-chart-3: var(--chart-3);
+  --color-chart-2: var(--chart-2);
+  --color-chart-1: var(--chart-1);
+  --color-ring: var(--ring);
+  --color-input: var(--input);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-accent-foreground: var(--text);
+  --color-accent: var(--raised);
+  --color-muted-foreground: var(--muted);
+  --color-muted: var(--raised);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-secondary: var(--secondary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary: var(--primary);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-popover: var(--popover);
+  --color-card-foreground: var(--card-foreground);
+  --color-card: var(--card);
+
+  /* `--radius-sm`·`--radius-md`·`--radius-lg`는 :root의 디자인 토큰을 그대로 쓴다 */
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+  --radius-3xl: calc(var(--radius) * 2.2);
+  --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
+:root {
+  color-scheme: dark;
+
+  /* 디자인 토큰 (docs/design/README.md) */
+  --bg: #101312;
+  --surface: #191d1b;
+  --field: #111513;
+  --raised: #222824;
+  --border: #2b322e;
+  --text: #f0f3f1;
+  --muted: #a0aaa4;
+  --faint: #7e8981;
+  --accent: #a5e8c5;
+  --accent-ink: #162a20;
+  --error: #f0b3a9;
+
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 20px;
+  --radius-pill: 100px;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+
+  /* shadcn 변수 → 디자인 토큰 (`--border`·`--accent`·`--muted`는 위의 디자인 토큰 자체) */
+  --background: var(--bg);
+  --foreground: var(--text);
+  --card: var(--surface);
+  --card-foreground: var(--text);
+  --popover: var(--surface);
+  --popover-foreground: var(--text);
+  --primary: var(--accent);
+  --primary-foreground: var(--accent-ink);
+  --secondary: var(--raised);
+  --secondary-foreground: var(--text);
+  --destructive: var(--error);
+  --input: var(--border);
+  --ring: var(--accent);
+  --chart-1: var(--accent);
+  --chart-2: var(--muted);
+  --chart-3: var(--faint);
+  --chart-4: var(--raised);
+  --chart-5: var(--border);
+  --radius: var(--radius-md);
+  --sidebar: var(--surface);
+  --sidebar-foreground: var(--text);
+  --sidebar-primary: var(--accent);
+  --sidebar-primary-foreground: var(--accent-ink);
+  --sidebar-accent: var(--raised);
+  --sidebar-accent-foreground: var(--text);
+  --sidebar-border: var(--border);
+  --sidebar-ring: var(--accent);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
   }
-}
-
-body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  body {
+    @apply bg-background text-foreground;
+  }
+  html {
+    @apply font-sans;
+  }
 }

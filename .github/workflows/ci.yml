@@ -33,8 +33,17 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # 포크 테스트, E2E 빌드·실행, 빌드 결과 검사(빌드 2회)를 한 잡에서 돌린다.
+    timeout-minutes: 30
     steps:
+      - name: Require ETH_MAINNET_RPC_URL secret
+        env:
+          ETH_MAINNET_RPC_URL: ${{ secrets.ETH_MAINNET_RPC_URL }}
+        run: |
+          if [ -z "${ETH_MAINNET_RPC_URL// /}" ]; then
+            echo "::error::ETH_MAINNET_RPC_URL 시크릿이 없거나 비어 있습니다. Ethereum 포크(anvil)에 필요한 Ethereum 메인넷 RPC URL을 저장소 시크릿으로 등록하세요."
+            exit 1
+          fi
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
         with:
@@ -42,9 +51,17 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version-file: package.json
+      - uses: foundry-rs/foundry-toolchain@v1
       - run: bun install --frozen-lockfile
       - run: bunx playwright install --with-deps chromium
+      - run: bun run test:fork
+        env:
+          ETH_MAINNET_RPC_URL: ${{ secrets.ETH_MAINNET_RPC_URL }}
       - run: bun run test:e2e
+        env:
+          ETH_MAINNET_RPC_URL: ${{ secrets.ETH_MAINNET_RPC_URL }}
+      # 업체 RPC 변수에는 스크립트가 가짜 값(카나리아)을 넣으므로 시크릿을 주지 않는다.
+      - run: bun run check:build
       - uses: actions/upload-artifact@v7
         if: ${{ failure() }}
         with:
