@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import {
+  CONNECTED_PRIMARY_STATE,
   RESTORE_SETTLE_TIMEOUT_MS,
   connectModal,
   connectWithMock,
@@ -40,7 +41,7 @@ test.describe("지갑 연결 — 사용자가 브라우저 지갑을 연결하�
         "data-connected-address",
         sameAddressPattern(mockAccount),
       );
-      await expect(primaryButton(page)).toHaveAttribute("data-state", "ready");
+      await expect(primaryButton(page)).toHaveAttribute("data-state", CONNECTED_PRIMARY_STATE);
       await expect(primaryButton(page)).toBeDisabled();
     });
 
@@ -137,7 +138,7 @@ test.describe("지갑 연결 — 사용자가 브라우저 지갑을 연결하�
         "data-connected-address",
         sameAddressPattern(addressBefore!),
       );
-      await expect(primaryButton(page)).toHaveAttribute("data-state", "ready");
+      await expect(primaryButton(page)).toHaveAttribute("data-state", CONNECTED_PRIMARY_STATE);
     });
 
     /**

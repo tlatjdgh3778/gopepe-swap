@@ -51,6 +51,7 @@ function buildTokens(chainId: SupportedChainId, snapshot: readonly Token[]): rea
     name: "Ether",
     symbol: "ETH",
     decimals: 18,
+    logoURI: "https://assets.coingecko.com/coins/images/279/large/ethereum.png",
   };
 
   return [
