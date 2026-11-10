@@ -39,6 +39,9 @@ export type StubEip1193 = {
   setHandler(method: string, handler: StubHandler | undefined): void;
   // 지갑 쪽에서 체인이 바뀐 것처럼 체인을 바꾸고 `chainChanged` 이벤트를 보낸다.
   changeChain(chainId: number): void;
+  // 지갑 쪽에서 계정이 바뀐 것처럼 계정 목록을 바꾸고 `accountsChanged` 이벤트를 보낸다(T-6 추가).
+  // 이후 `eth_accounts`·`eth_requestAccounts`는 바뀐 계정을 돌려준다.
+  changeAccounts(accounts: readonly Address[]): void;
 };
 
 // EIP-1193 오류 형태(`code`가 있는 Error)
@@ -140,6 +143,15 @@ export function createStubEip1193(options: StubEip1193Options): StubEip1193 {
     },
     changeChain(nextChainId) {
       setChain(nextChainId);
+    },
+    changeAccounts(nextAccounts) {
+      const accounts = [...nextAccounts];
+      overrides.set("eth_accounts", () => (authorized ? [...accounts] : []));
+      overrides.set("eth_requestAccounts", () => {
+        authorized = true;
+        return [...accounts];
+      });
+      emit("accountsChanged", [...accounts]);
     },
   };
 }

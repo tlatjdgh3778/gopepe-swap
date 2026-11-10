@@ -1,7 +1,7 @@
 import { act, render, renderHook, waitFor } from "@testing-library/react";
 import { Profiler, type ReactNode } from "react";
 import type { Address } from "viem";
-import { expect } from "vitest";
+import { expect, vi } from "vitest";
 import {
   type CreateConnectorFn,
   type State,
@@ -222,4 +222,47 @@ export function createButtonStateRecorder() {
 
 export function currentButton(button: TrackedButton): ButtonSnapshot {
   return snapshotButton(button);
+}
+
+// --- T-6 추가: 가짜 타이머에서도 쓰는 대기 헬퍼 ---
+// 모듈을 불러온 시점(가짜 타이머를 켜기 전)의 실제 타이머·시계를 잡아 둔다.
+const realSetTimeout = globalThis.setTimeout.bind(globalThis);
+const realDateNow = Date.now.bind(Date);
+
+// 대기 중인 비동기 작업(응답 처리, 0ms 타이머로 예약된 알림, 렌더링)을 진행시킨다.
+// 가짜 타이머에서는 0ms 타이머만 실행하고 가짜 시계는 움직이지 않는다.
+async function stepPendingWork() {
+  await act(async () => {
+    if (vi.isFakeTimers()) await vi.advanceTimersByTimeAsync(0);
+    await new Promise<void>((resolve) => realSetTimeout(resolve, 10));
+  });
+}
+
+// 조건이 맞을 때까지 기다린다. 실제 시간으로 `timeoutMs`가 지나도 맞지 않으면 마지막 실패를 던진다.
+// testing-library `waitFor`와 달리 가짜 타이머에서도 멈추지 않고, 가짜 시계를 움직이지 않는다.
+export async function waitUntil(assertion: () => void, timeoutMs = 5_000): Promise<void> {
+  const deadline = realDateNow() + timeoutMs;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (realDateNow() > deadline) throw error;
+    }
+    await stepPendingWork();
+  }
+}
+
+// 대기 중인 작업을 몇 차례 진행시킨다. 어떤 일이 일어나지 않았음을 판정하기 전에 쓴다.
+export async function settlePendingWork(rounds = 5): Promise<void> {
+  for (let round = 0; round < rounds; round += 1) await stepPendingWork();
+}
+
+// 가짜 시계를 지정한 시각(`Date.now()` 기준)까지 진행한다. 그 사이에 예약된 타이머가 실행된다.
+export async function advanceFakeTimeTo(time: number): Promise<void> {
+  const now = Date.now();
+  if (time < now) throw new Error(`가짜 시계를 되돌릴 수 없다: ${now} → ${time}`);
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(time - now);
+  });
 }

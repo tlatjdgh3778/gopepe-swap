@@ -29,6 +29,13 @@ const BUTTONS: readonly TrackedButton[] = ["primary-button", "wallet-button"];
 
 const RESTORING = { state: "restoring", disabled: true, busy: true };
 const DISCONNECTED = { state: "disconnected", disabled: false, busy: false };
+// 연결 상태의 주 버튼 상태(F2 스펙 §4.1). `restoring`·`disconnected`는 포함하지 않는다.
+const CONNECTED_PRIMARY_STATES: readonly (string | null)[] = [
+  "select-token",
+  "enter-amount",
+  "insufficient-balance",
+  "input-valid",
+];
 
 // 앱과 같은 구성(기본 cookieStorage)으로 지갑을 연결해 두어, 쿠키에 연결을 저장한다.
 async function saveConnection(stub: StubEip1193) {
@@ -94,7 +101,7 @@ describe("연결 복원 — 복원이 끝나기 전에 미연결로 보이지 �
 
       await waitFor(() => {
         expect(currentButton("wallet-button").state).toBe("connected");
-        expect(currentButton("primary-button").state).toBe("ready");
+        expect(CONNECTED_PRIMARY_STATES).toContain(currentButton("primary-button").state);
       });
       expect(
         screen.getByTestId("wallet-button").getAttribute("data-connected-address")?.toLowerCase(),
@@ -211,7 +218,7 @@ describe("연결 복원 — 복원이 끝나기 전에 미연결로 보이지 �
       await advance(1000);
 
       expect(currentButton("wallet-button").state).toBe("connected");
-      expect(currentButton("primary-button").state).toBe("ready");
+      expect(CONNECTED_PRIMARY_STATES).toContain(currentButton("primary-button").state);
       for (const button of BUTTONS) {
         const states = recorder.states(button);
         expect(states.indexOf("disconnected"), button).toBeGreaterThanOrEqual(0);
