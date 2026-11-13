@@ -1,7 +1,8 @@
 import { PrimaryButton } from "@/components/primary-button";
+import { QuoteDetails } from "@/components/quote-details";
 import { FlipButton, TokenField } from "@/components/token-field";
 
-// 스왑 카드. 서버 컴포넌트로 두고 입력부는 클라이언트 하위 컴포넌트가 맡는다. 견적은 이후 기능에서 채운다.
+// 스왑 카드. 서버 컴포넌트로 두고 입력부·견적 정보·주 버튼은 클라이언트 하위 컴포넌트가 맡는다.
 export function SwapCard() {
   return (
     <section
@@ -19,6 +20,7 @@ export function SwapCard() {
         <FlipButton />
         <TokenField side="out" />
       </div>
+      <QuoteDetails />
       <PrimaryButton />
     </section>
   );

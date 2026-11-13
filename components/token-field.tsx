@@ -3,6 +3,7 @@
 import { ArrowDownIcon, ChevronDownIcon } from "lucide-react";
 import { useId, useState } from "react";
 
+import { QuoteSkeleton } from "@/components/quote-details";
 import { TokenLogo } from "@/components/token-logo";
 import { TokenModal } from "@/components/token-modal";
 import type { SupportedChainId } from "@/config/chains";
@@ -16,6 +17,7 @@ import {
   useSwapFormActions,
   useSwapFormBalances,
 } from "@/providers/swap-form-provider";
+import { useSwapQuote } from "@/providers/swap-quote-provider";
 
 const FIELD_LABELS: Record<SwapSide, string> = {
   in: "보내는 토큰",
@@ -25,13 +27,14 @@ const FIELD_LABELS: Record<SwapSide, string> = {
 // 잔액을 모를 때(읽는 중·실패) 잔액 자리에 표시하는 기호.
 const UNKNOWN_BALANCE = "—";
 
-// 보내는 칸(`in`)과 받는 칸(`out`). 받는 칸 금액은 F3 견적 결과 자리라 읽기 전용이다.
+// 보내는 칸(`in`)과 받는 칸(`out`). 받는 칸 금액은 견적의 예상 수령량이라 읽기 전용이다.
 export function TokenField({ side }: { side: SwapSide }) {
   const { selectedChainId } = useSelectedChain();
   const wallet = useWalletRestore();
   const { tokenIn, tokenOut, amountIn } = useSwapForm();
   const { setAmountInput, setMaxAmount } = useSwapFormActions();
   const balances = useSwapFormBalances();
+  const { status: quoteStatus, quote } = useSwapQuote();
 
   // 모달을 연 체인을 기억한다. 선택 체인이 바뀌면 닫힌 것으로 보고 상태도 비운다(EC-2).
   const [modalChainId, setModalChainId] = useState<SupportedChainId | null>(null);
@@ -42,6 +45,9 @@ export function TokenField({ side }: { side: SwapSide }) {
   const balanceRaw = side === "in" ? balances.in : balances.out;
   const connected = wallet.status === "connected";
   const inputId = useId();
+
+  // 받는 칸 값. 견적이 있으면 예상 수령량, 없으면(`idle`·`loading`·`no-route`·`error`) 빈 값이다.
+  const outQuote = side === "out" && tokenOut !== null ? quote : null;
 
   return (
     <div
@@ -99,16 +105,24 @@ export function TokenField({ side }: { side: SwapSide }) {
             className="min-w-0 flex-1 bg-transparent font-mono text-[28px] tabular-nums outline-none placeholder:text-faint disabled:cursor-not-allowed"
           />
         ) : (
-          <input
-            id={inputId}
-            data-testid="amount-input"
-            type="text"
-            readOnly
-            tabIndex={-1}
-            placeholder="0"
-            value=""
-            className="min-w-0 flex-1 bg-transparent font-mono text-[28px] text-primary tabular-nums outline-none placeholder:text-faint"
-          />
+          <div className="relative flex min-w-0 flex-1 items-center">
+            <input
+              id={inputId}
+              data-testid="amount-input"
+              data-amount-out-raw={outQuote ? outQuote.amountOut.toString() : undefined}
+              type="text"
+              readOnly
+              tabIndex={-1}
+              placeholder={quoteStatus === "loading" ? "" : "0"}
+              value={
+                outQuote && tokenOut ? formatTokenAmount(outQuote.amountOut, tokenOut.decimals) : ""
+              }
+              className="w-full min-w-0 bg-transparent font-mono text-[28px] text-primary tabular-nums outline-none placeholder:text-faint"
+            />
+            {quoteStatus === "loading" && (
+              <QuoteSkeleton className="pointer-events-none absolute inset-y-0 left-0 my-auto h-8 w-36" />
+            )}
+          </div>
         )}
 
         <button
