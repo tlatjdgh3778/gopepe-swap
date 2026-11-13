@@ -52,13 +52,17 @@ export async function newIsolatedPage(
   return { context, page };
 }
 
-// 연결 상태의 주 버튼 상태(F2 스펙 §4.1). `restoring`·`disconnected`는 포함하지 않는다.
+// 입력 조건을 모두 통과한 뒤의 주 버튼 견적 상태(F3 스펙 §4.2).
+export const QUOTE_PRIMARY_STATE = /^(quoting|no-route|quote-error|quote-ready)$/;
+
+// 연결 상태의 주 버튼 상태(F2 스펙 §4.1, F3 스펙 §4.2). `restoring`·`disconnected`는 포함하지 않는다.
 export const CONNECTED_PRIMARY_STATE =
-  /^(select-token|enter-amount|insufficient-balance|input-valid)$/;
+  /^(select-token|enter-amount|insufficient-balance|quoting|no-route|quote-error|quote-ready)$/;
 
 // 복원이 끝날 때까지(주 버튼이 복원 중을 벗어날 때까지) 기다린다. 화면 hydration도 이 시점에 끝나 있다.
 export async function waitForRestoreSettled(page: Page): Promise<void> {
-  const settled = /^(disconnected|select-token|enter-amount|insufficient-balance|input-valid)$/;
+  const settled =
+    /^(disconnected|select-token|enter-amount|insufficient-balance|quoting|no-route|quote-error|quote-ready)$/;
   await expect(primaryButton(page)).toHaveAttribute("data-state", settled, {
     timeout: RESTORE_SETTLE_TIMEOUT_MS,
   });

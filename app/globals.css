@@ -30,6 +30,7 @@
   --color-faint: var(--faint);
   --color-accent-ink: var(--accent-ink);
   --color-error: var(--error);
+  --color-warning: var(--warning);
 
   /* shadcn 유틸리티 → 디자인 토큰 */
   --color-sidebar-ring: var(--sidebar-ring);
@@ -84,6 +85,7 @@
   --accent: #a5e8c5;
   --accent-ink: #162a20;
   --error: #f0b3a9;
+  --warning: #e8c38b;
 
   --radius-sm: 8px;
   --radius-md: 12px;

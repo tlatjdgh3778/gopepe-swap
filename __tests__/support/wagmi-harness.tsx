@@ -258,6 +258,30 @@ export async function settlePendingWork(rounds = 5): Promise<void> {
   for (let round = 0; round < rounds; round += 1) await stepPendingWork();
 }
 
+// --- T-6(F3) 추가: setTimeout까지 가짜로 둔 상태의 대기 헬퍼 ---
+// setTimeout이 가짜이면 타이머 진행 도중 처리된 응답의 0ms 알림(react-query notifyManager)이 현재+1ms로 밀려
+// `waitUntil`(가짜 시계를 움직이지 않음)로는 실행되지 않는다. 이 헬퍼는 확인 사이마다 가짜 시계를 `stepMs`만큼 진행한다.
+// 시각 경계를 판정하지 않는 대기(응답 반영)에만 쓴다. 실제 시간으로 `timeoutMs`가 지나면 마지막 실패를 던진다.
+export async function waitUntilAdvancingFakeClock(
+  assertion: () => void,
+  stepMs = 1,
+  timeoutMs = 5_000,
+): Promise<void> {
+  const deadline = realDateNow() + timeoutMs;
+  for (;;) {
+    try {
+      assertion();
+      return;
+    } catch (error) {
+      if (realDateNow() > deadline) throw error;
+    }
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(stepMs);
+      await new Promise<void>((resolve) => realSetTimeout(resolve, 10));
+    });
+  }
+}
+
 // 가짜 시계를 지정한 시각(`Date.now()` 기준)까지 진행한다. 그 사이에 예약된 타이머가 실행된다.
 export async function advanceFakeTimeTo(time: number): Promise<void> {
   const now = Date.now();

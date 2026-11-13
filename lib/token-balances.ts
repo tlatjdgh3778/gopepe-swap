@@ -20,7 +20,7 @@ export type TokenBalanceClient = Client<Transport, Chain>;
 // 클라이언트의 multicall 묶음 설정(wagmi 기본값 `batch.multicall: true`)을 끈 사본.
 // 묶음이 켜져 있으면 viem이 `eth_getBalance`를 Multicall3 `getEthBalance`로, 개별 `eth_call`을 aggregate3로 바꾸고
 // 타이머로 모아 보낸다. 잔액 읽기는 이 함수가 정한 요청(`eth_getBalance`, 토큰 `balanceOf`, 명시한 aggregate3)만 보낸다.
-function withoutMulticallBatching(client: TokenBalanceClient): TokenBalanceClient {
+export function withoutMulticallBatching(client: TokenBalanceClient): TokenBalanceClient {
   if (!client.batch?.multicall) return client;
   return { ...client, batch: { ...client.batch, multicall: false } };
 }

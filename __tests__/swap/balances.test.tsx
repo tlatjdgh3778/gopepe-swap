@@ -63,7 +63,16 @@ afterEach(() => {
 type Side = "in" | "out";
 type WalletSample = "disconnected" | "restoring";
 
-const CONNECTED_STATES = ["select-token", "enter-amount", "insufficient-balance", "input-valid"];
+// 연결 상태의 주 버튼 상태. F2의 입력 유효 자리는 F3 스펙 §4.2의 견적 상태 4종이다.
+const CONNECTED_STATES = [
+  "select-token",
+  "enter-amount",
+  "insufficient-balance",
+  "quoting",
+  "no-route",
+  "quote-error",
+  "quote-ready",
+];
 const SECOND_ACCOUNT: Address = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
 const ETHEREUM_PINNED = PINNED_TOKENS_BY_CHAIN[mainnet.id];

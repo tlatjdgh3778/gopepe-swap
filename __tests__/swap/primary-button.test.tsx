@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import type { Address } from "viem";
+import { type Address, parseUnits } from "viem";
 import { arbitrum, base, mainnet } from "viem/chains";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreateConnectorFn } from "wagmi";
@@ -15,6 +15,7 @@ import {
   balancesWith,
   installBalanceRpcStub,
   match,
+  matchQuote,
   sameAddress,
 } from "../support/rpc-balance-stub";
 import { createStubEip1193 } from "../support/stub-eip1193";
@@ -49,7 +50,16 @@ afterEach(() => {
 
 type Side = "in" | "out";
 
-const CONNECTED_STATES = ["select-token", "enter-amount", "insufficient-balance", "input-valid"];
+// 연결 상태의 주 버튼 상태. F2의 입력 유효 자리는 F3 스펙 §4.2의 견적 상태 4종이다.
+const CONNECTED_STATES = [
+  "select-token",
+  "enter-amount",
+  "insufficient-balance",
+  "quoting",
+  "no-route",
+  "quote-error",
+  "quote-ready",
+];
 const SECOND_ACCOUNT: Address = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
 const ETHEREUM_PINNED = PINNED_TOKENS_BY_CHAIN[mainnet.id];
@@ -366,11 +376,11 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
      * @spec DoD-38
      * @given mock 커넥터로 Ethereum에 연결돼 있고 보내는 ETH(잔액 1 ETH, 읽기 성공), 받는 USDC가 선택돼 있다. 표본 금액: `0.5`, `1`(잔액과 같음)을 하나씩 반복한다
      * @when 보내는 칸에 표본 금액을 입력한다
-     * @then primary-button의 data-state가 `input-valid`다
+     * @then primary-button의 data-state가 `quote-ready`다
      * @then primary-button이 비활성이다
      */
     it(
-      "[DoD-38] select-token·enter-amount·insufficient-balance에 해당하지 않으면 input-valid, 비활성이다",
+      "[DoD-38] select-token·enter-amount·insufficient-balance에 해당하지 않으면 quote-ready, 비활성이다",
       async () => {
         rpc.setBalances(balancesWith({ [NATIVE_ETH_ADDRESS]: ONE_ETH }));
         await renderMockConnectedApp();
@@ -379,8 +389,18 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
 
         for (const amount of ["0.5", "1"]) {
           await typeAmount(amount);
-          await waitUntil(() => expect(primaryState(), amount).toBe("input-valid"));
-          expectPrimary("input-valid", amount);
+          // 견적은 반영 대기와 RPC 응답 뒤에 끝난다. 이 표본 금액의 견적 응답(T-6 스텁 기본 성공)을 기다린 뒤 판정한다.
+          const amountIn = parseUnits(amount, ETH.decimals);
+          await waitUntil(() =>
+            expect(
+              rpc
+                .requests(matchQuote.input({ amountIn }))
+                .some((request) => request.status === "ok"),
+              amount,
+            ).toBe(true),
+          );
+          await waitUntil(() => expect(primaryState(), amount).toBe("quote-ready"));
+          expectPrimary("quote-ready", amount);
         }
       },
       CASE_TIMEOUT_MS,
@@ -392,7 +412,7 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
      * @spec EC-25
      * @given mock 커넥터로 Ethereum에 연결돼 있고 보내는 ETH 잔액이 1.23456789 ETH(표시값 `1.2345`)로 읽혔으며 받는 USDC가 선택돼 있다
      * @when 보내는 칸에 표시값보다 크고 잔액 이하인 `1.23456`을 입력한다
-     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `input-valid`다
+     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `quote-ready`다
      */
     it(
       "[EC-25] 표시용 버림값이 아니라 정수 잔액과 비교해 판정한다",
@@ -408,7 +428,9 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
         await waitUntil(() => expect(primaryState()).not.toBe("enter-amount"));
         await settlePendingWork();
         expect(primaryState()).not.toBe("insufficient-balance");
-        expect(primaryState()).toBe("input-valid");
+        // 견적(T-6 스텁 기본 성공)이 끝날 때까지 기다린다. 그동안 `insufficient-balance`로 바뀌지 않아야 한다.
+        await waitUntil(() => expect(primaryState()).toBe("quote-ready"));
+        expect(primaryState()).not.toBe("insufficient-balance");
       },
       CASE_TIMEOUT_MS,
     );
@@ -417,7 +439,7 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
      * @spec EC-25
      * @given mock 커넥터로 Ethereum에 연결돼 있고 카드 잔액 읽기가 성공했다. 표본: 보내는 USDC 잔액 123.456789 USDC·받는 DAI, 보내는 ETH 잔액 1.23456789 ETH(가스 예약량 0.005 ETH보다 크다)·받는 USDC를 하나씩 반복한다
      * @when max-button을 누른다
-     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `input-valid`다
+     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `quote-ready`다
      */
     it(
       "[EC-25] 최대로 넣은 값은 insufficient-balance가 되지 않는다",
@@ -442,7 +464,9 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
           await waitUntil(() => expect(amountInput().value, label).not.toBe(""));
           await settlePendingWork();
           expect(primaryState(), label).not.toBe("insufficient-balance");
-          expect(primaryState(), label).toBe("input-valid");
+          // 견적(T-6 스텁 기본 성공)이 끝날 때까지 기다린다.
+          await waitUntil(() => expect(primaryState(), label).toBe("quote-ready"));
+          expect(primaryState(), label).not.toBe("insufficient-balance");
           resetSample();
         }
       },
@@ -455,7 +479,7 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
      * @spec EC-11
      * @given Ethereum에 연결돼 있고(계정 변경 표본은 스텁 EIP-1193, 나머지 표본은 mock 커넥터) 보내는 ETH, 받는 USDC가 선택돼 있다. 표본: 카드 잔액 읽기 응답이 지연 중, 카드 잔액 읽기가 실패, 첫 계정의 잔액 1 ETH 읽기가 성공한 뒤 연결 계정을 바꾸고(accountsChanged) 새 계정 읽기 응답이 지연 중인 상태, Ethereum에서 보내는 ETH 잔액 1 ETH 읽기가 성공한 뒤 선택 체인을 Base로 바꾸고 Base 카드 잔액 응답이 지연된 동안 받는 칸 모달에서 Base USDC를 고른 상태(EC-1로 받는 칸이 미선택이 됐다가 다시 선택된다)를 하나씩 반복하며 각 표본에서 보내는 칸 balance에 data-balance-raw가 없는지 먼저 확인한다
      * @when 보내는 칸에 `1000000`을 입력한다
-     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `input-valid`다
+     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `quote-ready`다
      */
     it(
       "[EC-11] 성공한 카드 잔액이 없으면 insufficient-balance를 판정하지 않는다",
@@ -518,7 +542,11 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
           await settlePendingWork();
           expect(balanceElement("in")!.hasAttribute("data-balance-raw"), sample).toBe(false);
           expect(primaryState(), sample).not.toBe("insufficient-balance");
-          expect(primaryState(), sample).toBe("input-valid");
+          // 견적(T-6 스텁 기본 성공)이 끝날 때까지 기다린다. 잔액 붙잡기(`hold`)는 견적 요청에 적용되지 않는다.
+          // 견적이 끝난 시점에도 카드 잔액은 여전히 모르는 상태여야 한다(@given).
+          await waitUntil(() => expect(primaryState(), sample).toBe("quote-ready"));
+          expect(balanceElement("in")!.hasAttribute("data-balance-raw"), sample).toBe(false);
+          expect(primaryState(), sample).not.toBe("insufficient-balance");
 
           release();
           resetSample();

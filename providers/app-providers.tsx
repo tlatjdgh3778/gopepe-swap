@@ -11,6 +11,7 @@ import { WalletRestoreSettledContext, useWalletRestoreTracker } from "@/hooks/us
 
 import { SelectedChainProvider } from "./selected-chain-provider";
 import { SwapFormProvider } from "./swap-form-provider";
+import { SwapQuoteProvider } from "./swap-quote-provider";
 
 export type AppProvidersProps = {
   // 서버에서 `gopepe-chain` 쿠키를 `parseSelectedChainId`로 읽은 값.
@@ -26,7 +27,9 @@ function WalletRestoreBoundary({ children }: { children: ReactNode }) {
   const settled = useWalletRestoreTracker();
   return (
     <WalletRestoreSettledContext.Provider value={settled}>
-      <SwapFormProvider>{children}</SwapFormProvider>
+      <SwapFormProvider>
+        <SwapQuoteProvider>{children}</SwapQuoteProvider>
+      </SwapFormProvider>
     </WalletRestoreSettledContext.Provider>
   );
 }
