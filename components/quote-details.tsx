@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 
+import { useAmountOutMinimum } from "@/hooks/use-amount-out-minimum";
 import {
   type PriceImpactSeverity,
   formatFeeTier,
@@ -9,8 +10,10 @@ import {
   formatQuoteRate,
   getPriceImpactSeverity,
 } from "@/lib/quote-format";
+import { type SlippageBps, formatSlippageBps } from "@/lib/slippage";
 import { formatTokenAmount } from "@/lib/token-amount";
 import { cn } from "@/lib/utils";
+import { useSlippage } from "@/providers/slippage-provider";
 import { useSwapForm } from "@/providers/swap-form-provider";
 import { useSwapQuote } from "@/providers/swap-quote-provider";
 
@@ -44,8 +47,10 @@ function QuoteRow({
   children: ReactNode;
   "data-testid": string;
   "data-amount-out-raw"?: string;
+  "data-amount-out-minimum-raw"?: string;
   "data-fee"?: number;
   "data-severity"?: PriceImpactSeverity;
+  "data-slippage-bps"?: SlippageBps;
 }) {
   return (
     <div {...dataAttributes} className="flex items-center justify-between gap-4 text-sm">
@@ -56,12 +61,15 @@ function QuoteRow({
 }
 
 /**
- * 받는 칸 아래의 환율 행과 `견적 정보`(예상 수령량, 가격 영향, 수수료 티어).
- * `loading`이면 값 자리에 스켈레톤, `success`이면 견적 값을 표시하고, 그 밖의 상태(`idle`, `no-route`, `error`)에서는 렌더링하지 않는다.
+ * 받는 칸 아래의 환율 행과 `견적 정보`(예상 수령량, 최소 수령량, 가격 영향, 수수료 티어, 슬리피지 허용치).
+ * `loading`이면 견적 값 자리에 스켈레톤, `success`이면 견적 값을 표시하고, 그 밖의 상태(`idle`, `no-route`, `error`)에서는 렌더링하지 않는다.
+ * 최소 수령량은 `useAmountOutMinimum()`만 읽고, 슬리피지 허용치는 견적과 무관해 `loading`에서도 스켈레톤 없이 현재 값을 표시한다.
  */
 export function QuoteDetails() {
   const { tokenIn, tokenOut, amountInRaw } = useSwapForm();
   const { status, quote } = useSwapQuote();
+  const amountOutMinimum = useAmountOutMinimum();
+  const { slippageBps } = useSlippage();
 
   if (status !== "loading" && status !== "success") return null;
   if (tokenIn === null || tokenOut === null) return null;
@@ -104,6 +112,19 @@ export function QuoteDetails() {
               <QuoteSkeleton className="w-28" />
             )}
           </QuoteRow>
+          <QuoteRow
+            label="최소 수령량"
+            data-testid="quote-amount-out-minimum"
+            data-amount-out-minimum-raw={
+              amountOutMinimum !== null ? amountOutMinimum.toString() : undefined
+            }
+          >
+            {amountOutMinimum !== null ? (
+              `${formatTokenAmount(amountOutMinimum, tokenOut.decimals)} ${tokenOut.symbol}`
+            ) : (
+              <QuoteSkeleton className="w-28" />
+            )}
+          </QuoteRow>
           <QuoteRow label="가격 영향" data-testid="quote-price-impact" data-severity={severity}>
             {quote && severity ? (
               <span className={PRICE_IMPACT_SEVERITY_CLASS[severity]}>
@@ -115,6 +136,13 @@ export function QuoteDetails() {
           </QuoteRow>
           <QuoteRow label="수수료 티어" data-testid="quote-fee-tier" data-fee={quote?.fee}>
             {quote ? formatFeeTier(quote.fee) : <QuoteSkeleton className="w-14" />}
+          </QuoteRow>
+          <QuoteRow
+            label="슬리피지 허용치"
+            data-testid="quote-slippage"
+            data-slippage-bps={slippageBps}
+          >
+            {formatSlippageBps(slippageBps)}
           </QuoteRow>
         </dl>
       </section>
