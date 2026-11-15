@@ -10,6 +10,7 @@ import { type WagmiConfig, attachE2EControl, createWagmiConfig } from "@/config/
 import { WalletRestoreSettledContext, useWalletRestoreTracker } from "@/hooks/use-wallet-restore";
 
 import { SelectedChainProvider } from "./selected-chain-provider";
+import { SlippageProvider } from "./slippage-provider";
 import { SwapFormProvider } from "./swap-form-provider";
 import { SwapQuoteProvider } from "./swap-quote-provider";
 
@@ -48,9 +49,11 @@ export function AppProviders({
   return (
     <WagmiProvider config={wagmiConfig} initialState={initialState}>
       <QueryClientProvider client={queryClient}>
-        <SelectedChainProvider initialChainId={initialChainId}>
-          <WalletRestoreBoundary>{children}</WalletRestoreBoundary>
-        </SelectedChainProvider>
+        <SlippageProvider>
+          <SelectedChainProvider initialChainId={initialChainId}>
+            <WalletRestoreBoundary>{children}</WalletRestoreBoundary>
+          </SelectedChainProvider>
+        </SlippageProvider>
       </QueryClientProvider>
     </WagmiProvider>
   );
