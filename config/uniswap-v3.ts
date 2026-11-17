@@ -67,3 +67,42 @@ export const uniswapV3PoolAbi = [
     ],
   },
 ] as const;
+
+// SwapRouter02 `exactInputSingle`과 deadline을 받는 `multicall` 오버로드.
+// 출처: Uniswap swap-router-contracts `IV3SwapRouter`, `IMulticallExtended`
+// https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
+// https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IMulticallExtended.sol
+export const swapRouter02Abi = [
+  {
+    type: "function",
+    name: "exactInputSingle",
+    stateMutability: "payable",
+    inputs: [
+      {
+        name: "params",
+        type: "tuple",
+        internalType: "struct IV3SwapRouter.ExactInputSingleParams",
+        components: [
+          { name: "tokenIn", type: "address", internalType: "address" },
+          { name: "tokenOut", type: "address", internalType: "address" },
+          { name: "fee", type: "uint24", internalType: "uint24" },
+          { name: "recipient", type: "address", internalType: "address" },
+          { name: "amountIn", type: "uint256", internalType: "uint256" },
+          { name: "amountOutMinimum", type: "uint256", internalType: "uint256" },
+          { name: "sqrtPriceLimitX96", type: "uint160", internalType: "uint160" },
+        ],
+      },
+    ],
+    outputs: [{ name: "amountOut", type: "uint256", internalType: "uint256" }],
+  },
+  {
+    type: "function",
+    name: "multicall",
+    stateMutability: "payable",
+    inputs: [
+      { name: "deadline", type: "uint256", internalType: "uint256" },
+      { name: "data", type: "bytes[]", internalType: "bytes[]" },
+    ],
+    outputs: [{ name: "results", type: "bytes[]", internalType: "bytes[]" }],
+  },
+] as const;

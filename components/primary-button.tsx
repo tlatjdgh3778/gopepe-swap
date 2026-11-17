@@ -5,27 +5,40 @@ import { LoaderCircleIcon, WalletIcon } from "lucide-react";
 import { useConnectModal } from "@/components/connect-modal";
 import { Button } from "@/components/ui/button";
 import { RESTORING_LABEL } from "@/components/wallet-button";
+import { useAmountOutMinimum } from "@/hooks/use-amount-out-minimum";
 import { useWalletRestore } from "@/hooks/use-wallet-restore";
 import {
-  type SwapButtonState,
-  getSwapButtonState,
-  getSwapInputState,
-} from "@/lib/swap-input-state";
+  type PrimaryButtonState,
+  getPrimaryButtonState,
+  getPrimaryButtonStateParams,
+  isPrimaryButtonEnabled,
+} from "@/lib/primary-button-state";
+import { useSwapExecution } from "@/providers/swap-execution-provider";
 import { useSwapForm, useSwapFormBalances } from "@/providers/swap-form-provider";
 import { useSwapQuote } from "@/providers/swap-quote-provider";
+import { useTokenAllowance } from "@/providers/token-allowance-provider";
 
-// 주 버튼 상태(스펙 §4.2). 복원 중·미연결이 먼저이고, 연결 상태에서는 입력 상태, 입력이 유효하면 견적 상태를 표시한다.
-export type PrimaryButtonState = "restoring" | "disconnected" | SwapButtonState;
-
-const SWAP_BUTTON_STATE_LABELS: Record<SwapButtonState, string> = {
+// 스펙 §1.1 문구. `approve-required`는 보내는 토큰 심볼 뒤에 ` 승인`을 붙인다.
+// `restoring`·`disconnected`는 아이콘이 있는 버튼으로 따로 그리므로 여기서는 쓰지 않는다.
+const STATE_LABELS: Record<Exclude<PrimaryButtonState, "approve-required">, string> = {
+  restoring: RESTORING_LABEL,
+  disconnected: "지갑 연결",
+  "awaiting-signature": "지갑에서 확인",
+  approving: "승인 중…",
+  swapping: "스왑 중…",
   "select-token": "토큰 선택",
   "enter-amount": "금액 입력",
   "insufficient-balance": "잔액 부족",
   quoting: "견적 계산 중…",
   "no-route": "지원하지 않는 페어",
   "quote-error": "견적을 가져올 수 없음",
-  // 스왑 실행은 F5다. 그때까지 비활성이다.
+  // ETH가 낀 페어의 견적 완료. ETH 페어 실행은 F7이다. 그때까지 비활성이다.
   "quote-ready": "스왑",
+  "price-impact-too-high": "가격 영향이 너무 큼",
+  "amount-too-small": "금액이 너무 적음",
+  "allowance-error": "승인 상태를 확인할 수 없음",
+  "checking-allowance": "승인 확인 중…",
+  "swap-ready": "스왑",
 };
 
 const baseClassName =
@@ -37,6 +50,9 @@ export function PrimaryButton() {
   const { tokenIn, tokenOut, amountInRaw } = useSwapForm();
   const balances = useSwapFormBalances();
   const quote = useSwapQuote();
+  const amountOutMinimum = useAmountOutMinimum();
+  const allowance = useTokenAllowance();
+  const { phase, approve, swap } = useSwapExecution();
 
   if (wallet.status === "restoring") {
     return (
@@ -67,24 +83,42 @@ export function PrimaryButton() {
     );
   }
 
+  // `SwapExecutionProvider`가 실행 가능 여부를 판정할 때와 같은 입력으로 판정한다.
   // 잔액을 모르면(`null`) 잔액 부족을 판정하지 않는다.
-  const inputState = getSwapInputState({
-    tokenIn,
-    tokenOut,
-    amountInRaw,
-    balanceInRaw: balances.in,
-  });
+  const buttonState = getPrimaryButtonState(
+    getPrimaryButtonStateParams({
+      walletStatus: wallet.status,
+      phase,
+      tokenIn,
+      tokenOut,
+      amountInRaw,
+      balanceInRaw: balances.in,
+      quote,
+      amountOutMinimum,
+      allowance,
+    }),
+  );
 
-  const buttonState = getSwapButtonState({ inputState, quoteStatus: quote.status });
+  const label =
+    buttonState === "approve-required"
+      ? `${tokenIn?.symbol ?? ""} 승인`
+      : STATE_LABELS[buttonState];
+
+  // 연타는 `useSwapExecution()`의 잠금이 한 번으로 막는다(EC-6).
+  const onClick = () => {
+    if (buttonState === "approve-required") void approve();
+    else if (buttonState === "swap-ready") void swap();
+  };
 
   return (
     <Button
       data-testid="primary-button"
       data-state={buttonState}
-      disabled
+      disabled={!isPrimaryButtonEnabled(buttonState)}
+      onClick={onClick}
       className={baseClassName}
     >
-      {SWAP_BUTTON_STATE_LABELS[buttonState]}
+      {label}
     </Button>
   );
 }

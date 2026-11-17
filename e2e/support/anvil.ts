@@ -174,3 +174,30 @@ export async function warmUpSwapQuote(
 ): Promise<void> {
   await quoteEachTierWith(anvilQuoteWarmUpClient, tokenIn, tokenOut, amountIn);
 }
+
+// 계정이 spender에게 준 ERC-20 allowance 정수를 anvil에서 직접 읽는다.
+export async function readErc20Allowance(
+  owner: Address,
+  token: Address,
+  spender: Address,
+): Promise<bigint> {
+  return anvilClient.readContract({
+    address: token,
+    abi: erc20Abi,
+    functionName: "allowance",
+    args: [owner, spender],
+  });
+}
+
+// 쓰기 테스트의 anvil 상태 격리. 테스트마다 `takeAnvilSnapshot`으로 새로 잡고 끝에 `revertAnvilSnapshot`으로 되돌린다.
+// revert한 id는 다시 쓰지 않는다.
+export async function takeAnvilSnapshot(): Promise<string> {
+  const id = await anvilRpc("evm_snapshot", []);
+  if (typeof id !== "string") throw new Error("[e2e] anvil evm_snapshot 응답이 id 문자열이 아니다");
+  return id;
+}
+
+// anvil은 없는 id로 revert해도 오류 없이 `false`를 돌려준다(T-1). 결과를 그대로 돌려 호출자가 `true`를 단정한다.
+export async function revertAnvilSnapshot(id: string): Promise<boolean> {
+  return (await anvilRpc("evm_revert", [id])) === true;
+}

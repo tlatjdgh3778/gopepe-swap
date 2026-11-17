@@ -52,17 +52,20 @@ export async function newIsolatedPage(
   return { context, page };
 }
 
-// 입력 조건을 모두 통과한 뒤의 주 버튼 견적 상태(F3 스펙 §4.2).
-export const QUOTE_PRIMARY_STATE = /^(quoting|no-route|quote-error|quote-ready)$/;
+// 입력 조건을 모두 통과한 뒤의 주 버튼 견적 상태(F3 스펙 §4.2)와 견적 뒤 멈춘 상태(F5 스펙 §4.3).
+// 일시 상태(`checking-allowance`, `awaiting-signature`, `approving`, `swapping`)는 포함하지 않는다.
+export const QUOTE_PRIMARY_STATE =
+  /^(quoting|no-route|quote-error|quote-ready|price-impact-too-high|amount-too-small|allowance-error|approve-required|swap-ready)$/;
 
-// 연결 상태의 주 버튼 상태(F2 스펙 §4.1, F3 스펙 §4.2). `restoring`·`disconnected`는 포함하지 않는다.
+// 연결 상태의 주 버튼 상태(F2 스펙 §4.1, F3 스펙 §4.2, F5 스펙 §4.3). `restoring`·`disconnected`는 포함하지 않는다.
 export const CONNECTED_PRIMARY_STATE =
-  /^(select-token|enter-amount|insufficient-balance|quoting|no-route|quote-error|quote-ready)$/;
+  /^(awaiting-signature|approving|swapping|select-token|enter-amount|insufficient-balance|quoting|no-route|quote-error|quote-ready|price-impact-too-high|amount-too-small|allowance-error|checking-allowance|approve-required|swap-ready)$/;
 
 // 복원이 끝날 때까지(주 버튼이 복원 중을 벗어날 때까지) 기다린다. 화면 hydration도 이 시점에 끝나 있다.
+// F5 일시 상태(`checking-allowance`, `awaiting-signature`, `approving`, `swapping`)는 끝난 상태로 보지 않는다.
 export async function waitForRestoreSettled(page: Page): Promise<void> {
   const settled =
-    /^(disconnected|select-token|enter-amount|insufficient-balance|quoting|no-route|quote-error|quote-ready)$/;
+    /^(disconnected|select-token|enter-amount|insufficient-balance|quoting|no-route|quote-error|quote-ready|price-impact-too-high|amount-too-small|allowance-error|approve-required|swap-ready)$/;
   await expect(primaryButton(page)).toHaveAttribute("data-state", settled, {
     timeout: RESTORE_SETTLE_TIMEOUT_MS,
   });

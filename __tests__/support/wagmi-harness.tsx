@@ -1,6 +1,6 @@
-import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { Profiler, type ReactNode } from "react";
-import type { Address } from "viem";
+import { type Address, type Hex, decodeFunctionData, getAddress, parseAbi } from "viem";
 import { expect, vi } from "vitest";
 import {
   type CreateConnectorFn,
@@ -289,4 +289,105 @@ export async function advanceFakeTimeTo(time: number): Promise<void> {
   await act(async () => {
     await vi.advanceTimersByTimeAsync(time - now);
   });
+}
+
+// --- T-7(F5) 추가: 체인 드롭다운 조작, 가짜 시계 단계 진행, 전송 calldata 디코드 ---
+
+// 헤더의 체인 선택 드롭다운(chain-select)을 열고 해당 체인 옵션을 고른 뒤 선택 체인이 바뀌기를 기다린다.
+// 옵션은 접근성 role(`option`)과 체인 이름(viem 체인 객체의 `name`)으로 찾는다. 프로브로 선택 체인을 바꾸지 않는다.
+export async function chooseChainFromDropdown(chain: { id: number; name: string }): Promise<void> {
+  const trigger = screen.getByTestId("chain-select");
+  // fireEvent는 Testing Library가 act로 감싼다.
+  fireEvent.click(trigger);
+  let option: HTMLElement | undefined;
+  await waitUntil(() => {
+    option = screen
+      .queryAllByRole("option")
+      .find((element) => (element.textContent ?? "").trim().endsWith(chain.name));
+    expect(option, `체인 옵션 ${chain.name}`).toBeDefined();
+  });
+  // Base UI Select 항목은 포인터 누름 뒤의 click으로 선택된다(누름 없는 click은 무시한다).
+  fireEvent.pointerDown(option!);
+  fireEvent.click(option!);
+  await waitUntil(() =>
+    expect(screen.getByTestId("chain-select").getAttribute("data-selected-chain-id")).toBe(
+      String(chain.id),
+    ),
+  );
+}
+
+// 가짜 시계를 `stepMs`씩 `totalMs`만큼 진행한다. 단계마다 실제 시간으로 잠깐 양보해 그 사이 시작된 응답이 처리되게 하고,
+// `onStep`(판정)을 호출한다. RPC 요청 제한 시간(viem http 10초)보다 짧은 단계로 진행해야 응답 전에 시간 제한이 나지 않는다.
+export async function advanceFakeClockInSteps(
+  totalMs: number,
+  stepMs: number,
+  onStep?: (elapsedMs: number) => void,
+): Promise<void> {
+  let elapsed = 0;
+  while (elapsed < totalMs) {
+    const step = Math.min(stepMs, totalMs - elapsed);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(step);
+      await new Promise<void>((resolve) => realSetTimeout(resolve, 10));
+    });
+    elapsed += step;
+    onStep?.(elapsed);
+  }
+}
+
+// 전송 calldata 디코드용 테스트 쪽 ABI 리터럴(제품 config의 ABI를 쓰지 않는다).
+export const STUB_ERC20_APPROVE_ABI = parseAbi([
+  "function approve(address spender, uint256 amount) returns (bool)",
+]);
+export const STUB_SWAP_ROUTER02_ABI = parseAbi([
+  "function multicall(uint256 deadline, bytes[] data) payable returns (bytes[] results)",
+  "function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)",
+]);
+
+export type DecodedApprove = { spender: Address; amount: bigint };
+
+// approve 전송 calldata를 디코드한다. `approve(address,uint256)`가 아니면 throw한다.
+export function decodeApproveCalldata(data: Hex): DecodedApprove {
+  const decoded = decodeFunctionData({ abi: STUB_ERC20_APPROVE_ABI, data });
+  if (decoded.functionName !== "approve")
+    throw new Error(`approve가 아니다: ${decoded.functionName}`);
+  const [spender, amount] = decoded.args;
+  return { spender: getAddress(spender), amount };
+}
+
+export type DecodedExactInputSingle = {
+  tokenIn: Address;
+  tokenOut: Address;
+  fee: number;
+  recipient: Address;
+  amountIn: bigint;
+  amountOutMinimum: bigint;
+  sqrtPriceLimitX96: bigint;
+};
+
+export type DecodedSwapMulticall = { deadline: bigint; calls: DecodedExactInputSingle[] };
+
+// swap 전송 calldata(`multicall(uint256,bytes[])`)와 안의 `exactInputSingle` 호출을 디코드한다. 형태가 다르면 throw한다.
+export function decodeSwapCalldata(data: Hex): DecodedSwapMulticall {
+  const outer = decodeFunctionData({ abi: STUB_SWAP_ROUTER02_ABI, data });
+  if (outer.functionName !== "multicall")
+    throw new Error(`multicall이 아니다: ${outer.functionName}`);
+  const [deadline, inner] = outer.args;
+  const calls = inner.map((callData) => {
+    const decoded = decodeFunctionData({ abi: STUB_SWAP_ROUTER02_ABI, data: callData });
+    if (decoded.functionName !== "exactInputSingle") {
+      throw new Error(`exactInputSingle이 아니다: ${decoded.functionName}`);
+    }
+    const [params] = decoded.args;
+    return {
+      tokenIn: getAddress(params.tokenIn),
+      tokenOut: getAddress(params.tokenOut),
+      fee: params.fee,
+      recipient: getAddress(params.recipient),
+      amountIn: params.amountIn,
+      amountOutMinimum: params.amountOutMinimum,
+      sqrtPriceLimitX96: params.sqrtPriceLimitX96,
+    };
+  });
+  return { deadline, calls };
 }

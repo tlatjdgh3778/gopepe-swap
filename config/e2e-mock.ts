@@ -1,7 +1,7 @@
 // E2E 빌드(`NEXT_PUBLIC_E2E_MOCK=1`) 전용 모듈이다.
 // `config/wagmi.ts`가 정적 플래그 분기 안에서만 가져오므로 플래그 없는 빌드에는 포함되지 않는다.
 // 이 파일 밖에서 이 모듈을 정적으로 import하지 않는다.
-import type { Address, Hex } from "viem";
+import { type Address, type Hex, UserRejectedRequestError } from "viem";
 
 import { mainnet } from "viem/chains";
 import { type Config, type CreateConnectorFn, createConnector, mock } from "wagmi";
@@ -25,6 +25,11 @@ export type GopepeE2EControl = {
   // mock 커넥터 `connectError`. `true`는 연결 요청 거부(UserRejectedRequestError), Error는 그 오류로 실패한다.
   // 연결 시점마다 읽으므로 페이지 로드 전(addInitScript)이나 후에 바꿀 수 있다.
   connectError?: boolean | Error;
+  // mock 커넥터의 트랜잭션 전송(`eth_sendTransaction`·`wallet_sendTransaction`) 실패. `connectError`와 같은 방식이다.
+  // `true`는 지갑 서명 거부(UserRejectedRequestError, 4001), Error는 그 오류로 실패한다.
+  // 요청은 `walletRequests`에 기록된 뒤 실패하며 anvil로 보내지 않는다.
+  // 전송 시점마다 읽으므로 페이지 로드 전(addInitScript)이나 후에 바꿀 수 있다.
+  sendTransactionError?: boolean | Error;
   // mock 커넥터가 지갑 provider로 받은 요청 기록(연결, 체인 전환 등).
   walletRequests: GopepeE2EWalletRequest[];
   // mock 커넥터의 계정 주소.
@@ -75,6 +80,9 @@ export function withE2EChains(chains: typeof SUPPORTED_CHAINS): typeof SUPPORTED
   ) as unknown as typeof SUPPORTED_CHAINS;
 }
 
+// `sendTransactionError` 제어값이 막는 지갑 전송 메서드.
+const SEND_TRANSACTION_METHODS = new Set(["eth_sendTransaction", "wallet_sendTransaction"]);
+
 export function createE2EMockConnector(): CreateConnectorFn {
   const features = {
     // 새로고침 전에 연결돼 있었으면 연결된 상태로 시작해 복원(reconnect)되게 한다.
@@ -104,7 +112,15 @@ export function createE2EMockConnector(): CreateConnectorFn {
         const provider = await inner.getProvider.call(this, parameters);
         const request = (async (args: GopepeE2EWalletRequest, options?: unknown) => {
           if (typeof window !== "undefined") {
-            getControl().walletRequests.push({ method: args.method, params: args.params });
+            const control = getControl();
+            control.walletRequests.push({ method: args.method, params: args.params });
+            const sendTransactionError = control.sendTransactionError;
+            if (SEND_TRANSACTION_METHODS.has(args.method) && sendTransactionError) {
+              if (typeof sendTransactionError === "boolean") {
+                throw new UserRejectedRequestError(new Error("Failed to send transaction."));
+              }
+              throw sendTransactionError;
+            }
           }
           return provider.request(args as never, options as never);
         }) as typeof provider.request;

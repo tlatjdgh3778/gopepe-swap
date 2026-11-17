@@ -1,5 +1,6 @@
 import {
   type Address,
+  type Hash,
   type Hex,
   decodeFunctionData,
   encodeAbiParameters,
@@ -12,6 +13,7 @@ import {
   numberToHex,
   parseAbi,
   parseAbiParameters,
+  toHex,
 } from "viem";
 import { arbitrum, base, mainnet } from "viem/chains";
 
@@ -32,7 +34,15 @@ export const STUB_CHAIN_IDS: readonly SupportedChainId[] = [mainnet.id, base.id,
 
 // `quote`(T-6 F3 추가): QuoterV2 `quoteExactInputSingle` 하위 호출을 담은 견적 aggregate3 `eth_call`.
 // 잔액 aggregate3(`aggregate3`)와 따로 분류하며, 기존 `failWhen`·`hold`는 견적 요청에 적용되지 않는다.
-export type BalanceRpcKind = "eth_getBalance" | "balanceOf" | "aggregate3" | "other" | "quote";
+// `allowance`·`receipt`(T-7 F5 추가): 아래 "T-7(F5) 추가" 절을 본다. 두 분류도 기존 `failWhen`·`hold`가 적용되지 않는다.
+export type BalanceRpcKind =
+  | "eth_getBalance"
+  | "balanceOf"
+  | "aggregate3"
+  | "other"
+  | "quote"
+  | "allowance"
+  | "receipt";
 
 export type BalanceRpcRequest = {
   // 받은 순서(0부터)
@@ -49,6 +59,10 @@ export type BalanceRpcRequest = {
   status: "pending" | "ok" | "failed";
   // 견적 요청(`kind: "quote"`)이면 디코드한 하위 호출. 그 밖에는 undefined
   quote?: QuoteRpcCall;
+  // T-7(F5) 추가: allowance 요청(`kind: "allowance"`)이면 디코드한 호출. 그 밖에는 undefined
+  allowance?: AllowanceRpcCall;
+  // T-7(F5) 추가: 영수증 계열(`kind: "receipt"`) 중 해시로 조회하는 요청의 해시. 그 밖에는 undefined
+  txHash?: Hash;
 };
 
 export type BalanceQuery = {
@@ -91,6 +105,28 @@ export type BalanceRpcStub = {
   failQuoteWhen(matcher: RequestMatcher | null): void;
   // 조건에 맞는 견적 요청의 응답을 `release()` 전까지 붙잡는다. 조건을 생략하면 모든 견적 요청이다.
   holdQuote(matcher?: RequestMatcher): HoldGate;
+
+  // --- T-7(F5) 추가: allowance `eth_call` ---
+  // allowance 규칙을 바꾼다. 응답 시점의 규칙으로 응답한다. 기본은 `defaultAllowance`(0, 사용자 확정).
+  setAllowances(fn: AllowanceFn): void;
+  // 현재 규칙의 allowance
+  allowanceOf(query: AllowanceQuery): bigint;
+  // 조건에 맞는 allowance 요청을 JSON-RPC 오류(-32000, viem이 재시도하지 않는 코드)로 실패시킨다. null이면 해제한다.
+  failAllowanceWhen(matcher: RequestMatcher | null): void;
+  // 조건에 맞는 allowance 요청의 응답을 `release()` 전까지 붙잡는다. 조건을 생략하면 모든 allowance 요청이다.
+  holdAllowance(matcher?: RequestMatcher): HoldGate;
+
+  // --- T-7(F5) 추가: 영수증 계열(`eth_getTransactionReceipt`·`eth_getTransactionByHash`·`eth_blockNumber`·`eth_getBlockByNumber`) ---
+  // 영수증 규칙을 바꾼다. 응답 시점의 규칙으로 응답한다. 기본은 `defaultReceiptRule`(영수증 성공).
+  setReceiptRule(rule: ReceiptRule): void;
+  // 현재 영수증 규칙
+  receiptRule(): ReceiptRule;
+  // 조건에 맞는 영수증 계열 요청을 JSON-RPC 오류(-32000, viem이 재시도하지 않는 코드)로 실패시킨다. null이면 해제한다.
+  failReceiptWhen(matcher: RequestMatcher | null): void;
+  // 조건에 맞는 영수증 계열 요청의 응답을 `release()` 전까지 붙잡는다. 조건을 생략하면 영수증 조회(`eth_getTransactionReceipt`)다.
+  holdReceipt(matcher?: RequestMatcher): HoldGate;
+  // 체인의 마지막으로 응답한 블록 번호
+  blockNumber(chainId: SupportedChainId): bigint;
 };
 
 // 2^61 - 1 (소수). 토큰 주소마다 서로 다른 값이 나오도록 나머지를 쓴다.
@@ -459,11 +495,155 @@ function answerQuoteEntry(
   return FAILED_SUBCALL;
 }
 
+// ─── T-7(F5) 추가: allowance `eth_call` 스텁 ──────────────────────────
+// 앱은 allowance를 토큰 주소로 보내는 ERC-20 `allowance(owner, spender)` `eth_call` 1회로 읽는다(multicall 묶음 없음).
+// 스텁은 calldata를 디코드해 allowance 규칙(`AllowanceFn`)으로 응답한다. 기본 규칙은 0이다(사용자 확정).
+
+export type AllowanceRpcCall = {
+  owner: Address;
+  spender: Address;
+  // 호출 대상(토큰) 주소
+  token: Address;
+};
+
+export type AllowanceQuery = AllowanceRpcCall & { chainId: SupportedChainId };
+export type AllowanceFn = (query: AllowanceQuery) => bigint;
+
+// 기본 allowance 규칙: 모든 키에 0
+export const DEFAULT_STUB_ALLOWANCE = 0n;
+export const defaultAllowance: AllowanceFn = () => DEFAULT_STUB_ALLOWANCE;
+
+export const STUB_MAX_UINT256 = 2n ** 256n - 1n;
+
+export type AllowanceFilter = Partial<AllowanceQuery>;
+
+function allowanceFilterMatches(filter: AllowanceFilter, query: AllowanceQuery): boolean {
+  return (
+    (filter.chainId === undefined || filter.chainId === query.chainId) &&
+    (filter.owner === undefined || sameAddress(filter.owner, query.owner)) &&
+    (filter.spender === undefined || sameAddress(filter.spender, query.spender)) &&
+    (filter.token === undefined || sameAddress(filter.token, query.token))
+  );
+}
+
+// 조건(체인·owner·spender·토큰 중 준 것)에 맞는 키만 `value`로, 나머지는 `fallback` 규칙으로 응답하는 규칙.
+export function allowanceWhen(
+  filter: AllowanceFilter,
+  value: bigint,
+  fallback: AllowanceFn = defaultAllowance,
+): AllowanceFn {
+  return (query) => (allowanceFilterMatches(filter, query) ? value : fallback(query));
+}
+
+// 모든 키에 같은 값으로 응답하는 규칙
+export function allowanceAlways(value: bigint): AllowanceFn {
+  return () => value;
+}
+
+// allowance 요청 조건 모음
+export const matchAllowance = {
+  // 모든 allowance 요청(분류 양성 대조에도 쓴다)
+  any: ((request) => request.kind === "allowance") as RequestMatcher,
+  // 조건(체인·owner·spender·토큰 중 준 것)에 맞는 allowance 요청
+  query:
+    (filter: AllowanceFilter): RequestMatcher =>
+    (request) =>
+      request.kind === "allowance" &&
+      request.allowance !== undefined &&
+      allowanceFilterMatches(filter, { chainId: request.chainId, ...request.allowance }),
+};
+
+// ─── T-7(F5) 추가: 영수증 계열 스텁 ───────────────────────────────────
+// 앱은 트랜잭션 체인의 RPC 프록시로 viem `waitForTransactionReceipt`(시간 제한 없음)를 쓴다.
+// viem은 먼저 `eth_getTransactionReceipt`를 한 번 보내고, 영수증이 없으면 `eth_blockNumber`를 폴링하며
+// 새 블록마다 `eth_getTransactionByHash`(처음 한 번, 실패하면 viem 내부 재시도)·`eth_getTransactionReceipt`를 보내고,
+// 영수증이 없고 트랜잭션이 대기 중이면 교체 확인용 `eth_getBlockByNumber`를 보낸다.
+// - `eth_blockNumber`는 요청마다 블록 번호를 1씩 올려 응답한다. viem은 교체 확인 중에 온 블록 이벤트를 건너뛰므로,
+//   번호가 그대로면 대기가 멈춘다. 폴링마다 번호가 진행되어 다음 폴링에서 영수증을 다시 조회한다.
+// - 영수증·트랜잭션·블록 응답은 viem 포매터(formatTransactionReceipt·formatTransaction·formatBlock)가 받는 RPC 형태다.
+// - 실패(`failReceiptWhen`)는 transport 재시도 대상이 아닌 JSON-RPC 오류(-32000)다.
+//   영수증 미발견과 `eth_getTransactionByHash` 지속 실패를 함께 주면 viem 내부 재시도(6회, 지수 대기 합계 12.6초)가 소진되어 대기가 reject된다.
+
+export type ReceiptQuery = { chainId: SupportedChainId; hash: Hash };
+
+// `not-found`는 `result: null`(viem `TransactionReceiptNotFoundError`)이다.
+export type ReceiptStatus = "success" | "reverted" | "not-found";
+// `pending`은 블록에 들어가지 않은 트랜잭션(blockNumber null), `not-found`는 `result: null`이다.
+export type TransactionLookup = "pending" | "not-found";
+
+export type ReceiptRule = {
+  receipt(query: ReceiptQuery): ReceiptStatus;
+  transaction(query: ReceiptQuery): TransactionLookup;
+};
+
+// 기본 영수증 규칙: 영수증 성공(트랜잭션 조회는 대기 중)
+export const defaultReceiptRule: ReceiptRule = {
+  receipt: () => "success",
+  transaction: () => "pending",
+};
+
+// 모든 해시에 같은 영수증 상태(와 트랜잭션 조회 결과)로 응답하는 규칙
+export function makeReceiptRule(
+  receipt: ReceiptStatus,
+  transaction: TransactionLookup = "pending",
+): ReceiptRule {
+  return { receipt: () => receipt, transaction: () => transaction };
+}
+
+export const RECEIPT_METHODS = [
+  "eth_getTransactionReceipt",
+  "eth_getTransactionByHash",
+  "eth_blockNumber",
+  "eth_getBlockByNumber",
+] as const;
+export type ReceiptMethod = (typeof RECEIPT_METHODS)[number];
+
+// 첫 `eth_blockNumber` 응답 직전의 블록 번호
+export const STUB_START_BLOCK = 20_000_000n;
+
+const STUB_TX_PARTY: Address = "0x0000000000000000000000000000000000000001";
+const ZERO_BLOOM: Hex = `0x${"00".repeat(256)}`;
+const ZERO_WORD: Hex = `0x${"00".repeat(32)}`;
+
+function stubBlockHash(chainId: SupportedChainId, blockNumber: bigint): Hash {
+  return keccak256(toHex(`gopepe-stub-block-${chainId}-${blockNumber}`));
+}
+
+// 영수증 계열 요청 조건 모음
+export const matchReceipt = {
+  // 모든 영수증 계열 요청(분류 양성 대조에도 쓴다)
+  any: ((request) => request.kind === "receipt") as RequestMatcher,
+  method:
+    (...methods: ReceiptMethod[]): RequestMatcher =>
+    (request) =>
+      request.kind === "receipt" && (methods as string[]).includes(request.method),
+  // 해시로 조회하는 요청(`eth_getTransactionReceipt`·`eth_getTransactionByHash`) 중 해당 해시
+  hash:
+    (hash: Hash, inner?: RequestMatcher): RequestMatcher =>
+    (request) =>
+      request.kind === "receipt" &&
+      request.txHash !== undefined &&
+      request.txHash.toLowerCase() === hash.toLowerCase() &&
+      (inner ? inner(request) : true),
+};
+
+// 견적 규칙 보조(T-7 F5 추가): 모든 티어가 수령량 = 입력 금액, slot0 가격 1(sqrtPriceX96 = 2^96)로 응답한다.
+// 가격 영향이 0 이하(`normal` 등급)이고, 입력 금액이 충분하면 최소 수령량이 0보다 크다. 수령량이 같으므로 가장 낮은 티어가 고른 티어다.
+export const parityQuoteRule: QuoteRule = {
+  quote: (query) => ({
+    status: "ok",
+    amountOut: query.amountIn,
+    sqrtPriceX96After: DEFAULT_SQRT_PRICE_X96_AFTER,
+  }),
+  slot0: () => ({ status: "ok", sqrtPriceX96: STUB_Q96 }),
+};
+
 type JsonRpcItem = { jsonrpc?: string; id?: number | string; method: string; params?: unknown[] };
 
 type Gate = {
   // T-6(F3) 추가: 기존 `hold`는 잔액 쪽(`balance`), `holdQuote`는 견적 요청(`quote`)에만 적용된다.
-  scope: "balance" | "quote";
+  // T-7(F5) 추가: `holdAllowance`는 allowance 요청(`allowance`), `holdReceipt`는 영수증 계열(`receipt`)에만 적용된다.
+  scope: "balance" | "quote" | "allowance" | "receipt";
   matcher: RequestMatcher;
   released: boolean;
   held: number;
@@ -472,6 +652,22 @@ type Gate = {
 };
 
 const BALANCE_OF_SELECTOR = "0x70a08231";
+// T-7(F5) 추가: ERC-20 `allowance(address,address)`
+const ALLOWANCE_SELECTOR = "0xdd62ed3e";
+
+function decodeAllowanceCall(to: string, data: Hex): AllowanceRpcCall | undefined {
+  try {
+    const decoded = decodeFunctionData({ abi: erc20Abi, data });
+    if (decoded.functionName !== "allowance") return undefined;
+    return {
+      owner: getAddress(decoded.args[0]),
+      spender: getAddress(decoded.args[1]),
+      token: getAddress(to),
+    };
+  } catch {
+    return undefined;
+  }
+}
 
 function readCallObject(params: unknown[] | undefined): { to?: string; data?: Hex } {
   const first = (params?.[0] ?? {}) as { to?: string; data?: Hex; input?: Hex };
@@ -521,6 +717,13 @@ export function installBalanceRpcStub(): BalanceRpcStub {
   let gates: Gate[] = [];
   let quoteRule: QuoteRule = defaultQuoteRule;
   let quoteFailMatcher: RequestMatcher | null = null;
+  // T-7(F5) 추가
+  let allowanceFn: AllowanceFn = defaultAllowance;
+  let allowanceFailMatcher: RequestMatcher | null = null;
+  let currentReceiptRule: ReceiptRule = defaultReceiptRule;
+  let receiptFailMatcher: RequestMatcher | null = null;
+  const blockNumbers = new Map<SupportedChainId, bigint>();
+  const currentBlock = (chainId: SupportedChainId) => blockNumbers.get(chainId) ?? STUB_START_BLOCK;
 
   function addGate(scope: Gate["scope"], matcher: RequestMatcher): HoldGate {
     let resolve!: () => void;
@@ -568,6 +771,13 @@ export function installBalanceRpcStub(): BalanceRpcStub {
           tokens: [getAddress(to)],
         };
       }
+      // T-7(F5) 추가: 토큰 주소로 가는 ERC-20 `allowance` 호출은 allowance 요청으로 따로 분류한다.
+      if (to && data?.toLowerCase().startsWith(ALLOWANCE_SELECTOR)) {
+        const allowance = decodeAllowanceCall(to, data);
+        if (allowance) {
+          return { ...common, kind: "allowance", account: undefined, tokens: [], allowance };
+        }
+      }
       // T-6(F3) 추가: QuoterV2 하위 호출을 담은 aggregate3는 견적 요청으로 따로 분류한다.
       const quote = data ? decodeQuoteAggregate3(chainId, data) : undefined;
       if (quote) {
@@ -583,7 +793,109 @@ export function installBalanceRpcStub(): BalanceRpcStub {
         };
       }
     }
+    // T-7(F5) 추가: 영수증 계열 메서드
+    if ((RECEIPT_METHODS as readonly string[]).includes(item.method)) {
+      const first = item.params?.[0];
+      const byHash =
+        item.method === "eth_getTransactionReceipt" || item.method === "eth_getTransactionByHash";
+      return {
+        ...common,
+        kind: "receipt",
+        account: undefined,
+        tokens: [],
+        txHash: byHash && typeof first === "string" ? (first as Hash) : undefined,
+      };
+    }
     return { ...common, kind: "other", account: undefined, tokens: [] };
+  }
+
+  // T-7(F5) 추가: 영수증 계열 응답(viem 포매터가 받는 RPC 형태). `null`은 미발견이다.
+  function receiptResult(request: BalanceRpcRequest, item: JsonRpcItem): unknown {
+    const { chainId } = request;
+    switch (item.method) {
+      case "eth_blockNumber": {
+        const next = currentBlock(chainId) + 1n;
+        blockNumbers.set(chainId, next);
+        return numberToHex(next);
+      }
+      case "eth_getBlockByNumber": {
+        const tag = item.params?.[0];
+        const number =
+          typeof tag === "string" && tag.startsWith("0x") ? BigInt(tag) : currentBlock(chainId);
+        return {
+          hash: stubBlockHash(chainId, number),
+          parentHash: stubBlockHash(chainId, number - 1n),
+          number: numberToHex(number),
+          timestamp: numberToHex(1_700_000_000n + number),
+          nonce: "0x0000000000000000",
+          difficulty: "0x0",
+          totalDifficulty: "0x0",
+          gasLimit: numberToHex(30_000_000n),
+          gasUsed: "0x0",
+          baseFeePerGas: "0x1",
+          miner: STUB_TX_PARTY,
+          extraData: "0x",
+          logsBloom: ZERO_BLOOM,
+          mixHash: ZERO_WORD,
+          receiptsRoot: ZERO_WORD,
+          stateRoot: ZERO_WORD,
+          transactionsRoot: ZERO_WORD,
+          sha3Uncles: ZERO_WORD,
+          size: "0x0",
+          uncles: [],
+          transactions: [],
+        };
+      }
+      case "eth_getTransactionByHash": {
+        const hash = request.txHash!;
+        if (currentReceiptRule.transaction({ chainId, hash }) === "not-found") return null;
+        return {
+          hash,
+          nonce: "0x0",
+          blockHash: null,
+          blockNumber: null,
+          transactionIndex: null,
+          from: STUB_TX_PARTY,
+          to: STUB_TX_PARTY,
+          value: "0x0",
+          gas: "0x5208",
+          maxFeePerGas: "0x3b9aca00",
+          maxPriorityFeePerGas: "0x1",
+          input: "0x",
+          type: "0x2",
+          chainId: numberToHex(chainId),
+          accessList: [],
+          v: "0x0",
+          r: ZERO_WORD,
+          s: ZERO_WORD,
+          yParity: "0x0",
+        };
+      }
+      case "eth_getTransactionReceipt": {
+        const hash = request.txHash!;
+        const status = currentReceiptRule.receipt({ chainId, hash });
+        if (status === "not-found") return null;
+        const blockNumber = currentBlock(chainId);
+        return {
+          blockHash: stubBlockHash(chainId, blockNumber),
+          blockNumber: numberToHex(blockNumber),
+          contractAddress: null,
+          cumulativeGasUsed: "0x5208",
+          effectiveGasPrice: "0x3b9aca00",
+          from: STUB_TX_PARTY,
+          gasUsed: "0x5208",
+          logs: [],
+          logsBloom: ZERO_BLOOM,
+          status: status === "success" ? "0x1" : "0x0",
+          to: STUB_TX_PARTY,
+          transactionHash: hash,
+          transactionIndex: "0x0",
+          type: "0x2",
+        };
+      }
+      default:
+        return undefined;
+    }
   }
 
   function result(request: BalanceRpcRequest, item: JsonRpcItem): unknown {
@@ -623,6 +935,17 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       case "other":
         if (item.method === "eth_chainId") return numberToHex(chainId);
         return undefined;
+      // T-7(F5) 추가
+      case "allowance": {
+        const call = request.allowance!;
+        return encodeFunctionResult({
+          abi: erc20Abi,
+          functionName: "allowance",
+          result: allowanceFn({ chainId, ...call }),
+        });
+      }
+      case "receipt":
+        return receiptResult(request, item);
       case "quote": {
         const { data } = readCallObject(item.params);
         const decoded = decodeQuoteAggregate3(chainId, data!)!;
@@ -643,7 +966,11 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     const id = item.id ?? null;
 
     // 견적 요청은 견적 쪽 붙잡기·실패 규칙만, 그 밖의 요청은 기존 규칙만 적용한다(T-6 F3).
-    const scope: Gate["scope"] = request.kind === "quote" ? "quote" : "balance";
+    // T-7(F5) 추가: allowance 요청과 영수증 계열도 각자의 붙잡기·실패 규칙만 적용한다.
+    const scope: Gate["scope"] =
+      request.kind === "quote" || request.kind === "allowance" || request.kind === "receipt"
+        ? request.kind
+        : "balance";
     const holding = gates.filter(
       (gate) => gate.scope === scope && !gate.released && gate.matcher(request),
     );
@@ -657,7 +984,14 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       }
     }
 
-    const activeFailMatcher = scope === "quote" ? quoteFailMatcher : failMatcher;
+    const activeFailMatcher =
+      scope === "quote"
+        ? quoteFailMatcher
+        : scope === "allowance"
+          ? allowanceFailMatcher
+          : scope === "receipt"
+            ? receiptFailMatcher
+            : failMatcher;
     if (activeFailMatcher?.(request)) {
       request.status = "failed";
       return { jsonrpc: "2.0", id, error: { code: -32000, message: "stub: request failed" } };
@@ -716,6 +1050,34 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     },
     holdQuote(matcher) {
       return addGate("quote", matcher ?? (() => true));
+    },
+    // T-7(F5) 추가
+    setAllowances(fn) {
+      allowanceFn = fn;
+    },
+    allowanceOf(query) {
+      return allowanceFn(query);
+    },
+    failAllowanceWhen(matcher) {
+      allowanceFailMatcher = matcher;
+    },
+    holdAllowance(matcher) {
+      return addGate("allowance", matcher ?? (() => true));
+    },
+    setReceiptRule(rule) {
+      currentReceiptRule = rule;
+    },
+    receiptRule() {
+      return currentReceiptRule;
+    },
+    failReceiptWhen(matcher) {
+      receiptFailMatcher = matcher;
+    },
+    holdReceipt(matcher) {
+      return addGate("receipt", matcher ?? matchReceipt.method("eth_getTransactionReceipt"));
+    },
+    blockNumber(chainId) {
+      return currentBlock(chainId);
     },
   };
 }

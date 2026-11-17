@@ -44,6 +44,19 @@ const PINNED_STABLECOIN_ADDRESSES: Record<
   },
 };
 
+// allowance를 0으로 초기화한 뒤에만 0이 아닌 값으로 다시 승인할 수 있는 토큰의 체인별 주소 목록.
+// 0이 아닌 allowance 위에 0이 아닌 approve를 보내면 revert한다.
+// 출처: Ethereum USDT(TetherToken) `approve`의 `require(!((_value != 0) && (allowed[msg.sender][_spender] != 0)))`
+// https://etherscan.io/address/0xdAC17F958D2ee523a2206206994597C13D831ec7#code
+export const ALLOWANCE_RESET_TOKEN_ADDRESSES_BY_CHAIN: Record<
+  SupportedChainId,
+  readonly Address[]
+> = {
+  [mainnet.id]: [PINNED_STABLECOIN_ADDRESSES[mainnet.id].usdt],
+  [base.id]: [],
+  [arbitrum.id]: [],
+};
+
 function buildTokens(chainId: SupportedChainId, snapshot: readonly Token[]): readonly Token[] {
   const nativeEth: Token = {
     chainId,
