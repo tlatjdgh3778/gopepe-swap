@@ -439,14 +439,25 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
      * @spec EC-25
      * @given mock 커넥터로 Ethereum에 연결돼 있고 카드 잔액 읽기가 성공했다. 표본: 보내는 USDC 잔액 123.456789 USDC·받는 DAI, 보내는 ETH 잔액 1.23456789 ETH(가스 예약량 0.005 ETH보다 크다)·받는 USDC를 하나씩 반복한다
      * @when max-button을 누른다
-     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 `quote-ready`다
+     * @then primary-button의 data-state가 `insufficient-balance`가 아니고 견적 뒤 상태(USDC→DAI는 `approve-required`, ETH→USDC는 `quote-ready`)다
      */
     it(
       "[EC-25] 최대로 넣은 값은 insufficient-balance가 되지 않는다",
       async () => {
+        // 견적 뒤 상태: ERC-20 페어는 allowance 응답(기본 스텁 0 < amountInRaw)까지 받은 뒤 approve-required, ETH 페어는 quote-ready(F5 §4.3)
         const samples = [
-          { tokenIn: USDC, tokenOut: DAI, balance: 123_456_789n },
-          { tokenIn: ETH, tokenOut: USDC, balance: 1_234_567_890_000_000_000n },
+          {
+            tokenIn: USDC,
+            tokenOut: DAI,
+            balance: 123_456_789n,
+            settledState: "approve-required",
+          },
+          {
+            tokenIn: ETH,
+            tokenOut: USDC,
+            balance: 1_234_567_890_000_000_000n,
+            settledState: "quote-ready",
+          },
         ];
 
         for (const sample of samples) {
@@ -464,8 +475,10 @@ describe("주 버튼 — 사용자가 지금 입력에서 무엇이 부족한지
           await waitUntil(() => expect(amountInput().value, label).not.toBe(""));
           await settlePendingWork();
           expect(primaryState(), label).not.toBe("insufficient-balance");
-          // 견적(T-6 스텁 기본 성공)이 끝날 때까지 기다린다.
-          await waitUntil(() => expect(primaryState(), label).toBe("quote-ready"));
+          // 견적(T-6 스텁 기본 성공)과, ERC-20 페어는 allowance 응답(T-7 스텁 기본 0)까지 끝날 때까지 기다린다.
+          await waitUntil(() => expect(primaryState(), label).toBe(sample.settledState));
+          await settlePendingWork();
+          expect(primaryState(), label).toBe(sample.settledState);
           expect(primaryState(), label).not.toBe("insufficient-balance");
           resetSample();
         }

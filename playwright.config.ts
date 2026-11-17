@@ -33,6 +33,8 @@ const forkUrl = readForkUrl();
 export default defineConfig({
   testDir: "./e2e",
   forbidOnly: !!process.env.CI,
+  // 쓰기 spec이 같은 anvil 상태를 바꾸므로 파일을 순차 실행한다(F5 DoD-27).
+  workers: 1,
   retries: process.env.CI ? 2 : 0,
   reporter: "list",
   // 포크는 처음 읽는 상태를 업체 RPC에서 가져오므로 기본 30초보다 넉넉하게 둔다.
@@ -46,7 +48,8 @@ export default defineConfig({
     {
       name: "anvil",
       // URL은 셸 문자열에 넣지 않고 환경 변수로만 넘긴다. anvil 출력은 버린다.
-      command: `anvil --port ${E2E_ANVIL_PORT} --fork-url "$${FORK_URL_ENV}" --fork-block-number ${FORK_BLOCK_NUMBER} --silent`,
+      // `--block-time 1`: 1초 구간 채굴. 앱의 viem 영수증 대기와 채굴 시점이 겹쳐 approving·swapping에 멈추는 것을 막는다.
+      command: `anvil --port ${E2E_ANVIL_PORT} --fork-url "$${FORK_URL_ENV}" --fork-block-number ${FORK_BLOCK_NUMBER} --block-time 1 --silent`,
       port: E2E_ANVIL_PORT,
       env: { [FORK_URL_ENV]: forkUrl },
       reuseExistingServer: false,

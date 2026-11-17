@@ -10,6 +10,8 @@ export default defineConfig({
     environment: "node",
     include: ["__tests__/fork/**/*.test.ts"],
     globalSetup: ["./__tests__/fork/global-setup.ts"],
+    // 쓰기 트랜잭션을 보내는 포크 테스트가 같은 anvil을 공유하므로 파일을 순차 실행한다(DoD-31).
+    fileParallelism: false,
     // 포크는 처음 읽는 상태를 업체 RPC에서 가져오므로 기본 5초보다 넉넉하게 둔다.
     testTimeout: 30_000,
     hookTimeout: 30_000,
