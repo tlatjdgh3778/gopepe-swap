@@ -2,8 +2,10 @@
 
 import { useQuery } from "@tanstack/react-query";
 import { useEffect } from "react";
+import type { Address } from "viem";
 import { useConfig } from "wagmi";
 
+import type { SupportedChainId } from "@/config/chains";
 import type { Token } from "@/config/tokens";
 import { useWalletRestore } from "@/hooks/use-wallet-restore";
 import { readTokenBalance } from "@/lib/token-balances";
@@ -13,6 +15,18 @@ import { useSelectedChain } from "@/providers/selected-chain-provider";
 export const CARD_BALANCE_REFETCH_INTERVAL_MS = 15_000;
 
 export const CARD_BALANCE_QUERY_KEY = "card-token-balance";
+
+/**
+ * 카드 잔액 쿼리 키(키 상수, 체인, 계정, 토큰 주소). 계정·토큰이 없으면 `null`이다.
+ * 실행 provider가 approve 성공 뒤 같은 키로 보내는 토큰 잔액을 다시 읽을 때도 쓴다.
+ */
+export function getCardBalanceQueryKey(
+  chainId: SupportedChainId,
+  account: Address | null,
+  token: Address | null,
+) {
+  return [CARD_BALANCE_QUERY_KEY, chainId, account, token] as const;
+}
 
 /**
  * 카드 한 칸의 선택 토큰 잔액(정수). 연결 상태가 아니거나, 토큰이 없거나,
@@ -30,7 +44,7 @@ export function useTokenBalance(token: Token | null): bigint | null {
   const enabled = account !== undefined && tokenAddress !== undefined;
 
   const query = useQuery({
-    queryKey: [CARD_BALANCE_QUERY_KEY, selectedChainId, account ?? null, tokenAddress ?? null],
+    queryKey: getCardBalanceQueryKey(selectedChainId, account ?? null, tokenAddress ?? null),
     queryFn: () => {
       if (!account || !tokenAddress) throw new Error("card balance query is disabled");
       return readTokenBalance(config.getClient({ chainId: selectedChainId }), {

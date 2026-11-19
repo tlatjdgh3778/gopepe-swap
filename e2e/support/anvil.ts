@@ -1,5 +1,6 @@
 import {
   type Address,
+  type Hash,
   BaseError,
   ContractFunctionRevertedError,
   ExecutionRevertedError,
@@ -200,4 +201,32 @@ export async function takeAnvilSnapshot(): Promise<string> {
 // anvil은 없는 id로 revert해도 오류 없이 `false`를 돌려준다(T-1). 결과를 그대로 돌려 호출자가 `true`를 단정한다.
 export async function revertAnvilSnapshot(id: string): Promise<boolean> {
   return (await anvilRpc("evm_revert", [id])) === true;
+}
+
+// 계정의 nonce(`latest` 블록 기준 트랜잭션 수)를 anvil에서 직접 읽는다.
+// `--block-time 1`에서 전송 전에는 latest와 pending이 같고, mock 커넥터 전송에는 nonce 필드가 없어
+// 클릭 전에 읽은 값이 그 클릭으로 체결되는 트랜잭션의 nonce다(tx-status T-1). snapshot 뒤, 앞선 tx 채굴 뒤에 읽는다.
+export async function readAccountNonce(account: Address): Promise<number> {
+  return anvilClient.getTransactionCount({ address: account, blockTag: "latest" });
+}
+
+// 보낸 계정·nonce로 anvil에서 트랜잭션 해시를 직접 찾는다(앱 프록시를 거치지 않는다, 판정의 기대값용).
+// anvil `eth_getTransactionBySenderAndNonce`는 pending·채굴 뒤 모두 응답한다(tx-status T-1).
+// 해당 트랜잭션이 없으면 던진다.
+export async function readTransactionHashBySenderAndNonce(
+  sender: Address,
+  nonce: number,
+): Promise<Hash> {
+  const transaction = await anvilRpc("eth_getTransactionBySenderAndNonce", [
+    sender,
+    numberToHex(nonce),
+  ]);
+  const hash =
+    typeof transaction === "object" && transaction !== null && "hash" in transaction
+      ? transaction.hash
+      : undefined;
+  if (typeof hash !== "string" || !/^0x[0-9a-fA-F]{64}$/.test(hash)) {
+    throw new Error(`[e2e] anvil에서 (${sender}, nonce ${nonce}) 트랜잭션을 찾지 못했다`);
+  }
+  return hash as Hash;
 }

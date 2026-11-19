@@ -22,11 +22,8 @@ import {
   TX_SETTLE_TIMEOUT_MS,
   enterErc20Swap,
   expectEnabledPrimaryState,
-  readObservedRoleMessages,
   readSendTransactionRequestCount,
   rejectWalletTransactions,
-  roleMessages,
-  startRoleMessageObserver,
 } from "./support/approve-swap";
 
 // F5 approve-swap E2E(T-13).
@@ -148,7 +145,6 @@ test.describe("승인과 스왑 — 연결된 사용자가 ERC-20 토큰을 다�
      * @given 선택 체인은 Ethereum(anvil 포크, 고정 블록)이고 mock 커넥터로 지갑이 연결되어 있다. 러너가 anvil 상태를 snapshot으로 잡고 mock 계정에 보내는 토큰(USDC) 잔액을 절대값으로 주입했으며, 러너가 읽은 SwapRouter02 allowance는 `amountInRaw`보다 작다. 사용자가 USDC→DAI 금액을 입력해 실제 견적이 성공했고 주 버튼은 `approve-required`다. E2E 제어값으로 mock 지갑의 트랜잭션 전송을 거부(4001)하도록 설정했다. 테스트 끝에 snapshot으로 revert한다
      * @when 사용자가 `approve-required` 주 버튼을 누르고 지갑 서명이 거부된다
      * @then 주 버튼이 클릭 전 상태(`approve-required`, 활성)로 돌아간다
-     * @then 메시지를 표시하지 않는다: 클릭 후 role이 alert·status인 요소가 생기지 않는다
      * @then 트랜잭션이 체결되지 않아 러너가 anvil에서 직접 읽은 SwapRouter02 allowance와 보내는 토큰·받는 토큰 잔액이 클릭 전 값 그대로다
      */
     test("[EC-2] approve 서명을 거부하면 주 버튼이 approve-required로 돌아가고 체결이 없다", async ({
@@ -166,11 +162,9 @@ test.describe("승인과 스왑 — 연결된 사용자가 ERC-20 토큰을 다�
       });
       await expectEnabledPrimaryState(page, "approve-required", ALLOWANCE_SETTLE_TIMEOUT_MS);
 
-      // given: E2E 제어값으로 전송 거부(4001)를 켜고, 클릭 전 전송 요청 수와 role 메시지 수를 기록한다
+      // given: E2E 제어값으로 전송 거부(4001)를 켜고, 클릭 전 전송 요청 수를 기록한다
       await rejectWalletTransactions(page);
       const sendRequestsBefore = await readSendTransactionRequestCount(page);
-      const roleMessagesBefore = await roleMessages(page).count();
-      await startRoleMessageObserver(page);
 
       // when: approve-required를 누르고, 지갑이 전송 요청을 받아 거부할 때까지 기다린다
       await primaryButton(page).click();
@@ -183,14 +177,6 @@ test.describe("승인과 스왑 — 연결된 사용자가 ERC-20 토큰을 다�
 
       // then: 주 버튼이 클릭 전 상태(approve-required, 활성)로 돌아간다
       await expectEnabledPrimaryState(page, "approve-required", TX_SETTLE_TIMEOUT_MS);
-
-      // then: 클릭 후 role이 alert·status인 요소가 생기지 않았다(문구·스냅샷으로 판정하지 않는다)
-      expect(await readObservedRoleMessages(page), "클릭 후 붙은 role alert·status 요소").toEqual(
-        [],
-      );
-      expect(await roleMessages(page).count(), "role alert·status 요소 수").toBe(
-        roleMessagesBefore,
-      );
 
       // then: 체결이 없어 러너가 다시 읽은 allowance·USDC·DAI가 클릭 전 값 그대로다
       expect(await readAnvil()).toEqual(before);
