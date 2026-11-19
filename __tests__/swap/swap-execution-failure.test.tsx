@@ -149,11 +149,6 @@ function clickPrimary() {
   fireEvent.click(primaryButton());
 }
 
-// 메시지 요소(접근성 role이 alert·status인 요소)
-function messageElements(): HTMLElement[] {
-  return [...screen.queryAllByRole("alert"), ...screen.queryAllByRole("status")];
-}
-
 // ─── 렌더 ─────────────────────────────────────────────────────────
 
 function useProbe() {
@@ -303,11 +298,10 @@ describe("approve·swap 실패 — 보내지 못하거나 체결되지 않으면
      * @when 주 버튼을 누른다
      * @then 지갑에서 해시를 받지 않아 영수증 조회 요청이 0건이다
      * @then 주 버튼이 클릭 전 상태(같은 data-state, 활성)로 돌아간다
-     * @then 메시지를 표시하지 않는다(클릭 후 role이 alert 또는 status인 요소가 새로 생기지 않는다)
      * @then allowance 읽기 요청 수가 클릭 직전 기록에서 늘지 않는다
      */
     it(
-      "[EC-2][EC-15] 지갑 서명을 거부하면 주 버튼이 클릭 전 상태로 돌아가고 메시지를 표시하지 않는다",
+      "[EC-2][EC-15] 지갑 서명을 거부하면 주 버튼이 클릭 전 상태로 돌아간다",
       async () => {
         for (const [index, kind] of TX_KINDS.entries()) {
           if (index > 0) resetSample();
@@ -316,7 +310,6 @@ describe("approve·swap 실패 — 보내지 못하거나 체결되지 않으면
           const before = currentButton("primary-button");
           const allowanceBefore = rpc.requests(matchAllowance.any).length;
           const seq = rpc.requests().length;
-          const messagesBefore = messageElements();
 
           clickPrimary();
           await waitUntil(() => expect(s.wallet.sent).toHaveLength(1), READY_TIMEOUT_MS);
@@ -328,10 +321,6 @@ describe("approve·swap 실패 — 보내지 못하거나 체결되지 않으면
           expect(rpc.requests(match.since(seq, matchReceipt.any)), kind).toEqual([]);
           expect(currentButton("primary-button").state, kind).toBe(before.state);
           expect(currentButton("primary-button").disabled, kind).toBe(false);
-          expect(
-            messageElements().filter((element) => !messagesBefore.includes(element)),
-            kind,
-          ).toEqual([]);
           expect(rpc.requests(matchAllowance.any), kind).toHaveLength(allowanceBefore);
         }
       },

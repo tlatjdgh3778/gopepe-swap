@@ -234,7 +234,10 @@ function toHoldGate(gate: WalletGate, onRelease: () => void): WalletHoldGate {
 }
 
 // `hash`는 해시로 응답, `error`는 EIP-1193 오류(`code`)로 응답한다.
-export type WalletReply = { type: "hash" } | { type: "error"; code: number; message?: string };
+// T-9(F6) 추가: `cause`를 주면 응답 오류의 원인(`cause`)으로 싣는다(지갑이 원인 체인 안쪽에 4001을 두는 형태). 없으면 기존과 같다.
+export type WalletReply =
+  | { type: "hash" }
+  | { type: "error"; code: number; message?: string; cause?: unknown };
 
 export type SentTransaction = {
   // 지갑 요청 기록(`stub.requests`)에서의 위치
@@ -306,7 +309,12 @@ export function installWalletTransactions(stub: StubEip1193): WalletTransactionC
     const reply = mode;
     if (reply.type === "error") {
       record.errorCode = reply.code;
-      throw providerRpcError(reply.code, reply.message ?? `stub: send failed (${reply.code})`);
+      const error = providerRpcError(
+        reply.code,
+        reply.message ?? `stub: send failed (${reply.code})`,
+      );
+      if (reply.cause !== undefined) Object.assign(error, { cause: reply.cause });
+      throw error;
     }
     counter += 1;
     record.hash = stubTransactionHash(counter);

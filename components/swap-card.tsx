@@ -2,6 +2,7 @@ import { PrimaryButton } from "@/components/primary-button";
 import { QuoteDetails } from "@/components/quote-details";
 import { SlippageSettings } from "@/components/slippage-settings";
 import { FlipButton, TokenField } from "@/components/token-field";
+import { TxStatus } from "@/components/tx-status";
 
 // 스왑 카드. 서버 컴포넌트로 두고 입력부·견적 정보·주 버튼은 클라이언트 하위 컴포넌트가 맡는다.
 export function SwapCard() {
@@ -26,6 +27,7 @@ export function SwapCard() {
       </div>
       <QuoteDetails />
       <PrimaryButton />
+      <TxStatus />
     </section>
   );
 }

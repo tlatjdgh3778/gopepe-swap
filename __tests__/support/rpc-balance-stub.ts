@@ -2,6 +2,7 @@ import {
   type Address,
   type Hash,
   type Hex,
+  type ReplacementReason,
   decodeFunctionData,
   encodeAbiParameters,
   encodeFunctionResult,
@@ -127,6 +128,18 @@ export type BalanceRpcStub = {
   holdReceipt(matcher?: RequestMatcher): HoldGate;
   // 체인의 마지막으로 응답한 블록 번호
   blockNumber(chainId: SupportedChainId): bigint;
+
+  // --- T-6(F6) 추가: 교체 주입 ---
+  // `eth_getTransactionByHash`가 트랜잭션을 돌려줄 때(영수증 규칙의 `transaction`이 `pending`) 쓸 해시별 필드.
+  // 함수가 undefined를 돌려주거나 null이면 기존 고정 필드로 응답한다. 응답 시점의 함수로 응답한다.
+  setTransactionFields(fn: TransactionFieldsFn | null): void;
+  // `fromBlock` 이상인 모든 블록의 `eth_getBlockByNumber` 트랜잭션 목록에 트랜잭션을 싣는다(블록에 들어간 형태).
+  // 기본 블록 트랜잭션 목록은 비어 있다.
+  addBlockTransaction(
+    chainId: SupportedChainId,
+    transaction: StubTransaction,
+    fromBlock: bigint,
+  ): void;
 };
 
 // 2^61 - 1 (소수). 토큰 주소마다 서로 다른 값이 나오도록 나머지를 쓴다.
@@ -638,6 +651,123 @@ export const parityQuoteRule: QuoteRule = {
   slot0: () => ({ status: "ok", sqrtPriceX96: STUB_Q96 }),
 };
 
+// ─── T-6(F6) 추가: 교체 주입 ──────────────────────────────────────────
+// viem `waitForTransactionReceipt`는 원 트랜잭션을 `eth_getTransactionByHash`로 한 번 대기 중으로 조회해 두고,
+// 영수증이 없으면 블록마다 `eth_getBlockByNumber(n, true)`에서 같은 보낸 계정·nonce의 다른 해시를 찾아 그 영수증으로 끝낸다.
+// 사유는 대체 트랜잭션의 받는 주소·값·데이터가 원과 같으면 `repriced`, 대체가 자기 주소로 값 0이면 `cancelled`, 그 밖은 `replaced`다.
+// - 원 트랜잭션 필드: `setTransactionFields`로 해시별로 준다(보낸 계정·nonce·받는 주소·값·데이터).
+// - 대체 트랜잭션: `addBlockTransaction`으로 지정 블록 이후 모든 블록에 싣는다(스텁 블록 번호는 요청마다 오르고 viem이 블록을 건너뛸 수 있다).
+// - 대체 영수증: 영수증 규칙(`receiptRuleByHash`)으로 대체 해시에 응답한다. 원 해시 영수증은 미발견으로 둔다.
+// 기본 응답(빈 블록 트랜잭션, 고정 대기 트랜잭션)은 바꾸지 않는다.
+
+export type StubTransaction = {
+  hash: Hash;
+  from: Address;
+  to: Address | null;
+  nonce: number;
+  value: bigint;
+  input: Hex;
+  maxFeePerGas: bigint;
+  maxPriorityFeePerGas: bigint;
+};
+
+export type TransactionFieldsFn = (query: ReceiptQuery) => StubTransaction | undefined;
+
+const STUB_MAX_FEE_PER_GAS = 1_000_000_000n;
+const STUB_MAX_PRIORITY_FEE_PER_GAS = 1n;
+// `replaced` 사유 대체 트랜잭션의 받는 주소(원 트랜잭션·보낸 계정과 다르다)
+export const STUB_REPLACED_TO: Address = "0x000000000000000000000000000000000000dEaD";
+
+// 지정하지 않은 필드는 기본값(받는 주소 0x…01, 값 0, 데이터 0x, 수수료 1 gwei·1 wei)인 스텁 트랜잭션
+export function stubTransaction(
+  fields: Pick<StubTransaction, "hash" | "from" | "nonce"> & Partial<StubTransaction>,
+): StubTransaction {
+  return {
+    to: STUB_TX_PARTY,
+    value: 0n,
+    input: "0x",
+    maxFeePerGas: STUB_MAX_FEE_PER_GAS,
+    maxPriorityFeePerGas: STUB_MAX_PRIORITY_FEE_PER_GAS,
+    ...fields,
+  };
+}
+
+// n번째(1부터) 스텁 대체 트랜잭션 해시. 지갑의 `stubTransactionHash`와 겹치지 않는다.
+export function stubReplacementHash(n: number): Hash {
+  return keccak256(toHex(`gopepe-stub-replacement-${n}`));
+}
+
+// 원 트랜잭션과 같은 보낸 계정·nonce로, viem이 `reason`으로 분류할 필드를 가진 대체 트랜잭션. 수수료는 원의 2배다.
+// - `repriced`: 받는 주소·값·데이터가 원과 같다
+// - `cancelled`: 자기 주소(보낸 계정)로 값 0, 데이터 0x
+// - `replaced`: 받는 주소(`STUB_REPLACED_TO`)·값(1 wei)이 원과 다르다
+export function stubReplacementTransaction(
+  reason: ReplacementReason,
+  original: StubTransaction,
+  hash: Hash,
+): StubTransaction {
+  const repriced: StubTransaction = {
+    ...original,
+    hash,
+    maxFeePerGas: original.maxFeePerGas * 2n,
+    maxPriorityFeePerGas: original.maxPriorityFeePerGas * 2n,
+  };
+  switch (reason) {
+    case "repriced":
+      return repriced;
+    case "cancelled":
+      return { ...repriced, to: original.from, value: 0n, input: "0x" };
+    case "replaced":
+      return { ...repriced, to: STUB_REPLACED_TO, value: 1n, input: "0x" };
+  }
+}
+
+// 해시별 영수증 상태 규칙. 목록에 없는 해시는 `fallback`(기본 미발견)이다. 트랜잭션 조회는 `transaction`(기본 대기 중)이다.
+export function receiptRuleByHash(
+  receipts: Readonly<Record<string, ReceiptStatus>>,
+  {
+    fallback = "not-found",
+    transaction = () => "pending",
+  }: { fallback?: ReceiptStatus; transaction?: ReceiptRule["transaction"] } = {},
+): ReceiptRule {
+  const lowered = new Map(
+    Object.entries(receipts).map(([hash, status]) => [hash.toLowerCase(), status]),
+  );
+  return {
+    receipt: ({ hash }) => lowered.get(hash.toLowerCase()) ?? fallback,
+    transaction,
+  };
+}
+
+// viem 포매터가 받는 RPC 트랜잭션 형태. `block`이 있으면 블록에 들어간 트랜잭션이다.
+function rpcTransaction(
+  chainId: SupportedChainId,
+  transaction: StubTransaction,
+  block: { number: bigint; index: number } | null,
+) {
+  return {
+    hash: transaction.hash,
+    nonce: numberToHex(transaction.nonce),
+    blockHash: block ? stubBlockHash(chainId, block.number) : null,
+    blockNumber: block ? numberToHex(block.number) : null,
+    transactionIndex: block ? numberToHex(block.index) : null,
+    from: transaction.from,
+    to: transaction.to,
+    value: numberToHex(transaction.value),
+    gas: numberToHex(300_000n),
+    maxFeePerGas: numberToHex(transaction.maxFeePerGas),
+    maxPriorityFeePerGas: numberToHex(transaction.maxPriorityFeePerGas),
+    input: transaction.input,
+    type: "0x2",
+    chainId: numberToHex(chainId),
+    accessList: [],
+    v: "0x0",
+    r: ZERO_WORD,
+    s: ZERO_WORD,
+    yParity: "0x0",
+  };
+}
+
 type JsonRpcItem = { jsonrpc?: string; id?: number | string; method: string; params?: unknown[] };
 
 type Gate = {
@@ -724,6 +854,13 @@ export function installBalanceRpcStub(): BalanceRpcStub {
   let receiptFailMatcher: RequestMatcher | null = null;
   const blockNumbers = new Map<SupportedChainId, bigint>();
   const currentBlock = (chainId: SupportedChainId) => blockNumbers.get(chainId) ?? STUB_START_BLOCK;
+  // T-6(F6) 추가
+  let transactionFieldsFn: TransactionFieldsFn | null = null;
+  const blockTransactions: {
+    chainId: SupportedChainId;
+    transaction: StubTransaction;
+    fromBlock: bigint;
+  }[] = [];
 
   function addGate(scope: Gate["scope"], matcher: RequestMatcher): HoldGate {
     let resolve!: () => void;
@@ -822,6 +959,11 @@ export function installBalanceRpcStub(): BalanceRpcStub {
         const tag = item.params?.[0];
         const number =
           typeof tag === "string" && tag.startsWith("0x") ? BigInt(tag) : currentBlock(chainId);
+        // T-6(F6) 추가: 지정 블록 이후에 실은 트랜잭션. 두 번째 인자가 true면 트랜잭션 객체, 아니면 해시 목록이다.
+        const included = blockTransactions
+          .filter((entry) => entry.chainId === chainId && number >= entry.fromBlock)
+          .map((entry) => entry.transaction);
+        const includeTransactions = item.params?.[1] === true;
         return {
           hash: stubBlockHash(chainId, number),
           parentHash: stubBlockHash(chainId, number - 1n),
@@ -843,12 +985,19 @@ export function installBalanceRpcStub(): BalanceRpcStub {
           sha3Uncles: ZERO_WORD,
           size: "0x0",
           uncles: [],
-          transactions: [],
+          transactions: includeTransactions
+            ? included.map((transaction, index) =>
+                rpcTransaction(chainId, transaction, { number, index }),
+              )
+            : included.map((transaction) => transaction.hash),
         };
       }
       case "eth_getTransactionByHash": {
         const hash = request.txHash!;
         if (currentReceiptRule.transaction({ chainId, hash }) === "not-found") return null;
+        // T-6(F6) 추가: 해시별 필드가 있으면 그 필드로 대기 중 트랜잭션을 돌려준다.
+        const fields = transactionFieldsFn?.({ chainId, hash });
+        if (fields) return rpcTransaction(chainId, { ...fields, hash }, null);
         return {
           hash,
           nonce: "0x0",
@@ -1078,6 +1227,13 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     },
     blockNumber(chainId) {
       return currentBlock(chainId);
+    },
+    // T-6(F6) 추가
+    setTransactionFields(fn) {
+      transactionFieldsFn = fn;
+    },
+    addBlockTransaction(chainId, transaction, fromBlock) {
+      blockTransactions.push({ chainId, transaction, fromBlock });
     },
   };
 }

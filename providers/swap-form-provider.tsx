@@ -47,11 +47,19 @@ export type SwapFormBalances = {
   out: bigint | null;
 };
 
+// 앱 전용 상태 변경 함수. 사용자 변경 횟수를 올리지 않는다.
+export type SwapFormAppActions = {
+  // 스왑 성공 뒤 앱이 보내는 칸 금액을 비운다.
+  clearAmountInput: () => void;
+};
+
 type SwapFormState = {
   chainId: SupportedChainId;
   tokenIn: Token | null;
   tokenOut: Token | null;
   amountIn: string;
+  // 금액·토큰 값을 실제로 바꾼 사용자 동작의 횟수. 선택 체인을 바꿔 기본값으로 돌아가도 유지한다.
+  userChangeCount: number;
 };
 
 function nativeTokenOf(chainId: SupportedChainId): Token {
@@ -61,8 +69,14 @@ function nativeTokenOf(chainId: SupportedChainId): Token {
 }
 
 // DoD-1: 보내는 토큰은 선택 체인의 ETH, 받는 토큰은 미선택, 금액은 빈 값.
-function defaultState(chainId: SupportedChainId): SwapFormState {
-  return { chainId, tokenIn: nativeTokenOf(chainId), tokenOut: null, amountIn: "" };
+function defaultState(chainId: SupportedChainId, userChangeCount = 0): SwapFormState {
+  return {
+    chainId,
+    tokenIn: nativeTokenOf(chainId),
+    tokenOut: null,
+    amountIn: "",
+    userChangeCount,
+  };
 }
 
 function sameToken(a: Token | null, b: Token | null): boolean {
@@ -74,9 +88,20 @@ function sameToken(a: Token | null, b: Token | null): boolean {
   );
 }
 
+// 금액·토큰 값이 같은지. 미선택끼리도 같다.
+function sameFormValues(a: SwapFormState, b: SwapFormState): boolean {
+  const sameSlot = (x: Token | null, y: Token | null) =>
+    x === null ? y === null : sameToken(x, y);
+  return (
+    sameSlot(a.tokenIn, b.tokenIn) && sameSlot(a.tokenOut, b.tokenOut) && a.amountIn === b.amountIn
+  );
+}
+
 const SwapFormContext = createContext<SwapFormValue | null>(null);
 const SwapFormActionsContext = createContext<SwapFormActions | null>(null);
 const SwapFormBalancesContext = createContext<SwapFormBalances | null>(null);
+const SwapFormUserChangeCountContext = createContext<number | null>(null);
+const SwapFormAppActionsContext = createContext<SwapFormAppActions | null>(null);
 
 // 선택 체인을 바꾸면 입력 상태를 DoD-1 기본값으로 되돌린다(EC-1).
 // 상태에 체인을 함께 저장하고 선택 체인과 다르면 기본값으로 바꾼다. Provider를 다시 마운트하지 않는다.
@@ -89,24 +114,42 @@ export function SwapFormProvider({ children }: { children: ReactNode }) {
 
   let state = storedState;
   if (storedState.chainId !== selectedChainId) {
-    state = defaultState(selectedChainId);
+    state = defaultState(selectedChainId, storedState.userChangeCount);
     setStoredState(state);
   }
 
-  const { chainId, tokenIn, tokenOut, amountIn } = state;
+  const { chainId, tokenIn, tokenOut, amountIn, userChangeCount } = state;
 
   const balanceIn = useTokenBalance(tokenIn);
   const balanceOut = useTokenBalance(tokenOut);
 
   // 갱신 시점의 상태가 다른 체인 기준이면 기본값에서 시작한다.
+  // 사용자 동작만 이 함수를 쓰며, 금액·토큰 값이 실제로 바뀌면 사용자 변경 횟수를 올린다.
   const update = useCallback(
     (next: (current: SwapFormState) => SwapFormState) => {
-      setStoredState((previous) =>
-        next(previous.chainId === selectedChainId ? previous : defaultState(selectedChainId)),
-      );
+      setStoredState((previous) => {
+        const base =
+          previous.chainId === selectedChainId
+            ? previous
+            : defaultState(selectedChainId, previous.userChangeCount);
+        const updated = next(base);
+        if (sameFormValues(base, updated)) return updated;
+        return { ...updated, userChangeCount: base.userChangeCount + 1 };
+      });
     },
     [selectedChainId],
   );
+
+  // 앱 전용 금액 비우기. 사용자 변경 횟수를 올리지 않는다.
+  const clearAmountInput = useCallback(() => {
+    setStoredState((previous) => {
+      const base =
+        previous.chainId === selectedChainId
+          ? previous
+          : defaultState(selectedChainId, previous.userChangeCount);
+      return base.amountIn === "" ? base : { ...base, amountIn: "" };
+    });
+  }, [selectedChainId]);
 
   const selectToken = useCallback(
     (side: SwapSide, token: Token) => {
@@ -181,11 +224,17 @@ export function SwapFormProvider({ children }: { children: ReactNode }) {
     [balanceIn, balanceOut],
   );
 
+  const appActions = useMemo<SwapFormAppActions>(() => ({ clearAmountInput }), [clearAmountInput]);
+
   return (
     <SwapFormContext.Provider value={value}>
       <SwapFormActionsContext.Provider value={actions}>
         <SwapFormBalancesContext.Provider value={balances}>
-          {children}
+          <SwapFormUserChangeCountContext.Provider value={userChangeCount}>
+            <SwapFormAppActionsContext.Provider value={appActions}>
+              {children}
+            </SwapFormAppActionsContext.Provider>
+          </SwapFormUserChangeCountContext.Provider>
         </SwapFormBalancesContext.Provider>
       </SwapFormActionsContext.Provider>
     </SwapFormContext.Provider>
@@ -209,5 +258,23 @@ export function useSwapFormActions(): SwapFormActions {
 export function useSwapFormBalances(): SwapFormBalances {
   const value = useContext(SwapFormBalancesContext);
   if (!value) throw new Error("useSwapFormBalances must be used within SwapFormProvider");
+  return value;
+}
+
+// 금액·토큰 값을 실제로 바꾼 사용자 동작(`selectToken`·`flipTokens`·`setAmountInput`·`setMaxAmount`)의 횟수.
+// 형식 검사에 걸린 입력, 같은 토큰 재선택, 같은 값의 `최대`, 앱 전용 동작으로는 오르지 않는다.
+// 실행 provider가 결과를 지우는 신호로 쓴다.
+export function useSwapFormUserChangeCount(): number {
+  const value = useContext(SwapFormUserChangeCountContext);
+  if (value === null) {
+    throw new Error("useSwapFormUserChangeCount must be used within SwapFormProvider");
+  }
+  return value;
+}
+
+// 앱 전용 상태 변경 함수. 화면의 사용자 동작에는 쓰지 않는다.
+export function useSwapFormAppActions(): SwapFormAppActions {
+  const value = useContext(SwapFormAppActionsContext);
+  if (!value) throw new Error("useSwapFormAppActions must be used within SwapFormProvider");
   return value;
 }
