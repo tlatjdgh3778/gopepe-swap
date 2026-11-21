@@ -34,7 +34,8 @@ export function TokenField({ side }: { side: SwapSide }) {
   const { tokenIn, tokenOut, amountIn } = useSwapForm();
   const { setAmountInput, setMaxAmount } = useSwapFormActions();
   const balances = useSwapFormBalances();
-  const { status: quoteStatus, quote } = useSwapQuote();
+  const quoteState = useSwapQuote();
+  const quoteStatus = quoteState.status;
 
   // 모달을 연 체인을 기억한다. 선택 체인이 바뀌면 닫힌 것으로 보고 상태도 비운다(EC-2).
   const [modalChainId, setModalChainId] = useState<SupportedChainId | null>(null);
@@ -46,8 +47,15 @@ export function TokenField({ side }: { side: SwapSide }) {
   const connected = wallet.status === "connected";
   const inputId = useId();
 
-  // 받는 칸 값. 견적이 있으면 예상 수령량, 없으면(`idle`·`loading`·`no-route`·`error`) 빈 값이다.
-  const outQuote = side === "out" && tokenOut !== null ? quote : null;
+  // 받는 칸 수령량. 견적 `success`이면 예상 수령량, `wrap`이면 `amountOut`(= `amountInRaw`, F7 DoD-15)이고,
+  // 그 밖(`idle`·`loading`·`no-route`·`error`)에는 없어서 빈 값이다.
+  const quotedAmountOut =
+    quoteState.status === "success"
+      ? quoteState.quote.amountOut
+      : quoteState.status === "wrap"
+        ? quoteState.amountOut
+        : null;
+  const amountOutRaw = side === "out" && tokenOut !== null ? quotedAmountOut : null;
 
   return (
     <div
@@ -109,13 +117,15 @@ export function TokenField({ side }: { side: SwapSide }) {
             <input
               id={inputId}
               data-testid="amount-input"
-              data-amount-out-raw={outQuote ? outQuote.amountOut.toString() : undefined}
+              data-amount-out-raw={amountOutRaw === null ? undefined : amountOutRaw.toString()}
               type="text"
               readOnly
               tabIndex={-1}
               placeholder={quoteStatus === "loading" ? "" : "0"}
               value={
-                outQuote && tokenOut ? formatTokenAmount(outQuote.amountOut, tokenOut.decimals) : ""
+                amountOutRaw !== null && tokenOut
+                  ? formatTokenAmount(amountOutRaw, tokenOut.decimals)
+                  : ""
               }
               className="w-full min-w-0 bg-transparent font-mono text-[28px] text-primary tabular-nums outline-none placeholder:text-faint"
             />

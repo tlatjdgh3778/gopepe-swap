@@ -32,13 +32,16 @@ const DISCONNECTED = { state: "disconnected", disabled: false, busy: false };
 // 연결 상태의 주 버튼 상태(F2 스펙 §4.1, F2의 입력 유효 자리는 F3 스펙 §4.2의 견적 상태 4종).
 // `restoring`·`disconnected`는 포함하지 않는다.
 const CONNECTED_PRIMARY_STATES: readonly (string | null)[] = [
+  "wrapping",
+  "unwrapping",
   "select-token",
   "enter-amount",
   "insufficient-balance",
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 // 앱과 같은 구성(기본 cookieStorage)으로 지갑을 연결해 두어, 쿠키에 연결을 저장한다.

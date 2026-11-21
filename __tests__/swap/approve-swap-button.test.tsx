@@ -254,51 +254,6 @@ function expectPrimary(state: string, enabled: boolean, label: string) {
 }
 
 describe("주 버튼 — 사용자가 ERC-20 페어에서 승인이 필요한지, 바로 스왑할 수 있는지를 상태로 안내받는다", () => {
-  describe("ETH가 낀 페어의 견적이 끝난 경우", () => {
-    /**
-     * @spec DoD-6
-     * @given mock 커넥터로 Ethereum에 연결돼 있고 보내는 토큰 잔액이 금액보다 크게 읽혔다. 스텁은 견적을 가격 영향 `error` 등급이 아니고 최소 수령량이 0보다 큰 수령량으로 응답하고, allowance를 amountInRaw 이상(maxUint256)으로 응답한다(ERC-20 페어였다면 `swap-ready`가 됐을 값). 표본 방향: 보내는 ETH·받는 USDC·금액 `1`, 보내는 USDC·받는 ETH·금액 `1`을 하나씩 반복한다
-     * @when 표본 페어와 금액을 입력하고 입력 반영 대기(300ms)가 지나 견적이 끝나기를 기다린다
-     * @then useSwapQuote()의 status가 `success`다
-     * @then primary-button의 data-state가 `quote-ready`다
-     * @then primary-button이 비활성(disabled)이다
-     */
-    it(
-      "[DoD-6] 보내는 토큰이나 받는 토큰이 ETH이면 견적 success에서 quote-ready이고 비활성이다",
-      async () => {
-        const samples = [
-          { label: "보내는 ETH·받는 USDC", tokenIn: NATIVE_ETH, tokenOut: ETHEREUM_USDC },
-          { label: "보내는 USDC·받는 ETH", tokenIn: ETHEREUM_USDC, tokenOut: NATIVE_ETH },
-        ];
-        for (const [index, sample] of samples.entries()) {
-          if (index > 0) resetSample();
-          rpc.setQuoteRule(parityQuoteRule);
-          // ERC-20 페어였다면 swap-ready가 됐을 값
-          rpc.setAllowances(allowanceAlways(STUB_MAX_UINT256));
-          const app = await renderConnectedApp();
-          await enterPair(app, sample.tokenIn, sample.tokenOut);
-          if (!sameAddress(sample.tokenIn, NATIVE_ETH)) {
-            // 보내는 토큰이 ERC-20이면 allowance 읽기까지 끝난 뒤의 상태를 본다.
-            await waitUntil(
-              () => expect(app.probe().allowance.status, sample.label).toBe("success"),
-              READY_TIMEOUT_MS,
-            );
-          }
-          await settlePendingWork();
-
-          // 전제: 가격 영향이 error 등급이 아니고 최소 수령량이 0보다 크다.
-          expect(priceImpactSeverity(), sample.label).not.toBe("error");
-          expect(app.probe().minimum, sample.label).not.toBeNull();
-          expect(app.probe().minimum! > 0n, sample.label).toBe(true);
-
-          expect(app.probe().quote.status, sample.label).toBe("success");
-          expectPrimary("quote-ready", false, sample.label);
-        }
-      },
-      MULTI_SAMPLE_TIMEOUT_MS,
-    );
-  });
-
   describe("ERC-20 페어의 견적이 스왑할 수 없는 값인 경우", () => {
     /**
      * @spec DoD-7

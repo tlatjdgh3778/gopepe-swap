@@ -65,13 +65,16 @@ type WalletSample = "disconnected" | "restoring";
 
 // 연결 상태의 주 버튼 상태. F2의 입력 유효 자리는 F3 스펙 §4.2의 견적 상태 4종이다.
 const CONNECTED_STATES = [
+  "wrapping",
+  "unwrapping",
   "select-token",
   "enter-amount",
   "insufficient-balance",
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 const SECOND_ACCOUNT: Address = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 

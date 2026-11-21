@@ -69,8 +69,8 @@ const EC4_DAI_BALANCE_RAW = 1_000_000_000_000_000_000_000n; // 1000 DAI
 
 // 예열 뒤 견적 요청은 수 ms 안에 끝난다(T-1). 입력 반영 대기와 브라우저·프록시 왕복을 넉넉하게 덮는다.
 const QUOTE_SETTLE_TIMEOUT_MS = 10_000;
-// EC-6: `no-route`를 본 뒤 QuoterV2 요청이 나오는지 지켜보는 시간. 입력 반영 대기(300ms)의 10배다.
-const EC6_OBSERVE_AFTER_NO_ROUTE_MS = 3_000;
+// EC-6: `wrap-ready`를 본 뒤 QuoterV2 요청이 나오는지 지켜보는 시간. 입력 반영 대기(300ms)의 10배다.
+const EC6_OBSERVE_AFTER_WRAP_READY_MS = 3_000;
 
 const SNAPSHOT_ERC20_ADDRESSES = TOKENS_BY_CHAIN[mainnet.id]
   .map((token) => token.address)
@@ -228,10 +228,10 @@ test.describe("견적 — 사용자가 보낼 금액의 예상 수령량·가격
      * @then `quote-details`가 표시되고 예상 수령량 행의 `data-amount-out-raw`가 러너가 고른 수령량 정수와 같다
      * @then `quote-details`에 가격 영향 행이 표시되고 `data-severity`가 `normal`·`warning`·`error` 중 하나다
      * @then `quote-details`에 수수료 티어 행이 표시되고 `data-fee`가 러너가 고른 티어와 같다
-     * @then 주 버튼 상태가 `quote-ready`다
-     * @then 주 버튼이 비활성이다
+     * @then 주 버튼 상태가 `swap-ready`다
+     * @then 주 버튼이 활성이다
      */
-    test("[DoD-11][DoD-12][DoD-35][DoD-36] ETH→USDC 견적이 성공하면 러너가 anvil에서 고른 수령량·티어를 표시하고 주 버튼이 quote-ready이고 비활성이다", async ({
+    test("[DoD-11][DoD-12][DoD-35][DoD-36] ETH→USDC 견적이 성공하면 러너가 anvil에서 고른 수령량·티어를 표시하고 주 버튼이 swap-ready이고 활성이다", async ({
       page,
     }) => {
       const ethBalance = await readEthBalance(E2E_MOCK_ACCOUNT);
@@ -270,8 +270,8 @@ test.describe("견적 — 사용자가 보낼 금액의 예상 수령량·가격
       );
       await expect(quoteFeeTierRow(page)).toBeVisible();
       await expect(quoteFeeTierRow(page)).toHaveAttribute("data-fee", String(fee));
-      await expect(primaryButton(page)).toHaveAttribute("data-state", "quote-ready");
-      await expect(primaryButton(page)).toBeDisabled();
+      await expect(primaryButton(page)).toHaveAttribute("data-state", "swap-ready");
+      await expect(primaryButton(page)).toBeEnabled();
     });
   });
 
@@ -316,11 +316,11 @@ test.describe("견적 — 사용자가 보낼 금액의 예상 수령량·가격
      * @spec EC-6 DoD-33 DoD-36
      * @given 러너가 anvil에서 mock 계정의 ETH 잔액 정수를 직접 읽었다. 선택 체인은 Ethereum이고 mock 커넥터로 지갑이 연결되어 있으며 보내는 칸 토큰이 ETH다. 브라우저가 보내는 RPC 프록시 요청을 감시한다
      * @when 사용자가 받는 칸을 WETH로 정하고 0보다 크고 러너가 읽은 ETH 잔액 이하인 금액을 보내는 칸에 입력한다
-     * @then 주 버튼 상태가 `no-route`다
-     * @then 주 버튼이 비활성이다
-     * @then 주 버튼이 `no-route`가 된 뒤 입력 반영 대기(300ms)보다 충분히 긴 시간이 지나도 브라우저가 보낸 RPC 프록시 요청 중 QuoterV2 호출이 0건이다
+     * @then 주 버튼 상태가 `wrap-ready`다
+     * @then 주 버튼이 활성이다
+     * @then 주 버튼이 `wrap-ready`가 된 뒤 입력 반영 대기(300ms)보다 충분히 긴 시간이 지나도 브라우저가 보낸 RPC 프록시 요청 중 QuoterV2 호출이 0건이다
      */
-    test("[EC-6][DoD-33][DoD-36] ETH→WETH는 QuoterV2를 호출하지 않고 주 버튼이 no-route이고 비활성이다", async ({
+    test("[EC-6][DoD-33][DoD-36] ETH→WETH는 QuoterV2를 호출하지 않고 주 버튼이 wrap-ready이고 활성이다", async ({
       page,
       baseURL,
     }) => {
@@ -337,12 +337,12 @@ test.describe("견적 — 사용자가 보낼 금액의 예상 수령량·가격
 
       await enterAmountIn(page, EC6_ETH_IN, DECIMALS_18);
 
-      await expect(primaryButton(page)).toHaveAttribute("data-state", "no-route");
-      await expect(primaryButton(page)).toBeDisabled();
+      await expect(primaryButton(page)).toHaveAttribute("data-state", "wrap-ready");
+      await expect(primaryButton(page)).toBeEnabled();
 
       // 일어나지 않아야 하는 요청을 판정하므로, 자동 대기 대신 정해진 시간을 지켜본 뒤 센다.
-      await page.waitForTimeout(EC6_OBSERVE_AFTER_NO_ROUTE_MS);
-      await expect(primaryButton(page)).toHaveAttribute("data-state", "no-route");
+      await page.waitForTimeout(EC6_OBSERVE_AFTER_WRAP_READY_MS);
+      await expect(primaryButton(page)).toHaveAttribute("data-state", "wrap-ready");
       expect(observed.quoterV2Calls, "프록시 요청 중 QuoterV2 호출 수").toBe(0);
     });
   });

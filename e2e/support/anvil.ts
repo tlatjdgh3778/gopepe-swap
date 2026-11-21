@@ -1,6 +1,7 @@
 import {
   type Address,
   type Hash,
+  type Hex,
   BaseError,
   ContractFunctionRevertedError,
   ExecutionRevertedError,
@@ -229,4 +230,15 @@ export async function readTransactionHashBySenderAndNonce(
     throw new Error(`[e2e] anvil에서 (${sender}, nonce ${nonce}) 트랜잭션을 찾지 못했다`);
   }
   return hash as Hash;
+}
+
+// 계정 코드를 anvil에서 직접 읽는다. 코드가 없으면 `undefined`다(viem `getCode`).
+// mock 계정(anvil 0번)은 포크 블록에서 EIP-7702 위임 표식(`0xef0100` + 위임 대상 주소)을 가진다(native-eth T-1).
+export async function readAccountCode(account: Address): Promise<Hex | undefined> {
+  return anvilClient.getCode({ address: account });
+}
+
+// 계정 코드를 `anvil_setCode`로 지운다(빈 코드 `0x`). snapshot을 잡은 뒤 준비 단계에서만 쓰고, revert로 되돌린다.
+export async function clearAccountCode(account: Address): Promise<void> {
+  await anvilRpc("anvil_setCode", [account, "0x"]);
 }

@@ -70,7 +70,10 @@ const CONNECTED_STATES = [
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrapping",
+  "unwrapping",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 // ─── 화면 ─────────────────────────────────────────────────────────
@@ -255,10 +258,10 @@ describe("견적 표시 — 사용자가 견적 상태에 맞는 수령량·환�
      * @then quote-details 안의 quote-price-impact가 표시돼 있고 data-severity가 `normal` | `warning` | `error` 중 하나다
      * @then quote-rate가 렌더링돼 있다
      * @then quote-skeleton이 없다
-     * @then useSwapQuote()의 status가 `success`인 같은 시점에 primary-button의 data-state가 `quote-ready`이고 비활성이다
+     * @then useSwapQuote()의 status가 `success`인 같은 시점에 primary-button의 data-state가 `price-impact-too-high`이고 비활성이다
      */
     it(
-      "[DoD-11][DoD-12][DoD-13][DoD-35][DoD-36][DoD-37] success이면 받는 칸 수령량, 견적 정보 세 행, 환율 행을 표시하고 quote-ready, 비활성이다",
+      "[DoD-11][DoD-12][DoD-13][DoD-35][DoD-36][DoD-37] success이면 받는 칸 수령량, 견적 정보 세 행, 환율 행을 표시하고 price-impact-too-high, 비활성이다",
       async () => {
         // 500 티어의 고정 수령량 1,234,567.891234 USDC(6 decimals)가 가장 많다.
         const FIXED_AMOUNT_OUT = 1_234_567_891_234n;
@@ -322,7 +325,8 @@ describe("견적 표시 — 사용자가 견적 상태에 맞는 수령량·환�
         );
         expect(quoteRate()).not.toBeNull();
         expect(skeletonCount()).toBe(0);
-        expect(buttonState).toBe("quote-ready");
+        // 이 스텁(1 ETH → 고정 수령량, 티어별 slot0)의 가격 영향은 `error` 등급이다.
+        expect(buttonState).toBe("price-impact-too-high");
         expect(buttonDisabled).toBe(true);
       },
       CASE_TIMEOUT_MS,
@@ -619,10 +623,10 @@ describe("견적 표시 — 사용자가 견적 상태에 맞는 수령량·환�
      * @when 입력 반영 대기(300ms)가 지나고 견적이 끝나기를 기다린다
      * @then quote-price-impact의 data-severity가 `error`다
      * @then quote-details가 렌더링돼 있고 받는 칸 amount-input과 quote-amount-out의 data-amount-out-raw가 스텁 수령량이다
-     * @then primary-button의 data-state가 `quote-ready`다
+     * @then primary-button의 data-state가 `price-impact-too-high`다
      */
     it(
-      "[DoD-17][EC-15] 표시값 15% 초과 가격 영향은 error 등급이고 견적을 표시하며 quote-ready다",
+      "[DoD-17][EC-15] 표시값 15% 초과 가격 영향은 error 등급이고 견적을 표시하며 price-impact-too-high다",
       async () => {
         rpc.setQuoteRule(priceImpactRule(AMOUNT_OUT_FOR_5000_BPS));
         const { result } = await renderEthUsdcQuote("1", "success");
@@ -646,7 +650,7 @@ describe("견적 표시 — 사용자가 견적 상태에 맞는 수령량·환�
         expect(detailsRow("quote-amount-out").getAttribute("data-amount-out-raw")).toBe(
           AMOUNT_OUT_FOR_5000_BPS.toString(),
         );
-        expect(primaryState()).toBe("quote-ready");
+        expect(primaryState()).toBe("price-impact-too-high");
       },
       CASE_TIMEOUT_MS,
     );

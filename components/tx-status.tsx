@@ -12,6 +12,7 @@ import type { Hash } from "viem";
 
 import type { SupportedChainId } from "@/config/chains";
 
+import type { SwapExecutionPhase } from "@/lib/primary-button-state";
 import { getTxExplorerUrl } from "@/lib/tx-explorer";
 import { type TxKind, type TxResultStatus } from "@/lib/tx-result";
 import { cn } from "@/lib/utils";
@@ -20,16 +21,28 @@ import { useSwapExecution } from "@/providers/swap-execution-provider";
 // 스펙 §4.3 `tx-status[data-status]`.
 type TxStatusView = "none" | "pending" | TxResultStatus;
 
-// 스펙 §1.1 문구. 금액·토큰 심볼을 넣지 않는다.
+// F6·F7 스펙 §1.1 문구. 금액·토큰 심볼을 넣지 않는다. wrap·unwrap은 같은 문구다.
 const PENDING_MESSAGES: Record<TxKind, string> = {
   approve: "승인 트랜잭션을 처리하는 중이에요",
   swap: "스왑 트랜잭션을 처리하는 중이에요",
+  wrap: "전환 트랜잭션을 처리하는 중이에요",
+  unwrap: "전환 트랜잭션을 처리하는 중이에요",
 };
 
 const SUCCESS_MESSAGES: Record<TxKind, string> = {
   approve: "승인이 완료됐어요",
   swap: "스왑이 완료됐어요",
+  wrap: "전환이 완료됐어요",
+  unwrap: "전환이 완료됐어요",
 };
+
+// 트랜잭션 해시를 받은 뒤 영수증을 기다리는 phase. 이때 pending을 표시한다(F6 DoD-1, F7 DoD-30).
+const PENDING_PHASES: ReadonlySet<SwapExecutionPhase> = new Set([
+  "approving",
+  "swapping",
+  "wrapping",
+  "unwrapping",
+]);
 
 const FAILURE_MESSAGES: Record<Exclude<TxResultStatus, "success">, string> = {
   rejected: "지갑에서 요청을 거절했어요",
@@ -59,7 +72,8 @@ type Display = {
 /**
  * 주 버튼 아래 트랜잭션 상태 메시지 영역(스펙 §1.1, §4.3).
  * 루트 요소 하나를 항상 마운트하고 상태가 바뀌어도 같은 노드를 유지한다. role은 `status`이고 `alert`는 쓰지 않는다.
- * 표시 우선순위: `approving`·`swapping`의 pending → `result` → `none`.
+ * 표시 우선순위: `approving`·`swapping`·`wrapping`·`unwrapping`의 pending → `result` → `none`.
+ * 잔액 감소 안내(`balanceDropped`)는 approve 성공 결과에만 있다.
  * 링크 체인·해시는 pending이면 `pendingTx`, 결과면 `result`의 값이다(스펙 §4.2).
  */
 export function TxStatus() {
@@ -74,7 +88,7 @@ export function TxStatus() {
     balanceDropped: false,
   };
 
-  if ((phase === "approving" || phase === "swapping") && pendingTx) {
+  if (PENDING_PHASES.has(phase) && pendingTx) {
     display = {
       status: "pending",
       kind: pendingTx.kind,

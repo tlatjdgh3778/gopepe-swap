@@ -1,4 +1,4 @@
-import type { Hex } from "viem";
+import type { Address, Hex } from "viem";
 
 // 견적에 쓰는 Uniswap V3 수수료 티어(100분의 1 bps 단위). 낮은 수수료 순이다.
 export const FEE_TIERS = [100, 500, 3000, 10000] as const;
@@ -68,10 +68,11 @@ export const uniswapV3PoolAbi = [
   },
 ] as const;
 
-// SwapRouter02 `exactInputSingle`과 deadline을 받는 `multicall` 오버로드.
-// 출처: Uniswap swap-router-contracts `IV3SwapRouter`, `IMulticallExtended`
+// SwapRouter02 `exactInputSingle`, deadline을 받는 `multicall` 오버로드, recipient를 받는 `unwrapWETH9` 오버로드.
+// 출처: Uniswap swap-router-contracts `IV3SwapRouter`, `IMulticallExtended`, v3-periphery `IPeripheryPayments`
 // https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IV3SwapRouter.sol
 // https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/interfaces/IMulticallExtended.sol
+// https://github.com/Uniswap/v3-periphery/blob/main/contracts/interfaces/IPeripheryPayments.sol
 export const swapRouter02Abi = [
   {
     type: "function",
@@ -105,4 +106,21 @@ export const swapRouter02Abi = [
     ],
     outputs: [{ name: "results", type: "bytes[]", internalType: "bytes[]" }],
   },
+  {
+    type: "function",
+    name: "unwrapWETH9",
+    stateMutability: "payable",
+    inputs: [
+      { name: "amountMinimum", type: "uint256", internalType: "uint256" },
+      { name: "recipient", type: "address", internalType: "address" },
+    ],
+    outputs: [],
+  },
 ] as const;
+
+// SwapRouter02가 라우터 자기 자신(`address(this)`)으로 해석하는 recipient 표식.
+// 받는 토큰이 ETH인 스왑은 `exactInputSingle`의 recipient를 이 값으로 두어 WETH를 라우터에 남기고
+// 같은 `multicall`의 `unwrapWETH9`로 ETH를 계정에 보낸다.
+// 출처: Uniswap swap-router-contracts `Constants.ADDRESS_THIS`
+// https://github.com/Uniswap/swap-router-contracts/blob/main/contracts/libraries/Constants.sol
+export const ADDRESS_THIS: Address = "0x0000000000000000000000000000000000000002";

@@ -1,6 +1,6 @@
 "use client";
 
-import { type ReactNode, createContext, useContext, useEffect, useState } from "react";
+import { type ReactNode, createContext, useContext, useEffect, useMemo, useState } from "react";
 
 import { type SwapQuoteReadInput, useSwapQuoteRead } from "@/hooks/use-swap-quote-read";
 import { type SwapQuoteState, planSwapQuote } from "@/lib/swap-quote";
@@ -11,7 +11,7 @@ import { useSwapForm } from "./swap-form-provider";
 export const SWAP_QUOTE_DEBOUNCE_MS = 300;
 
 // 견적할 입력이 바뀐 횟수. 시그니처는 견적할 입력(체인, 치환 전 두 토큰 주소, `amountInRaw`)이며
-// 견적하지 않는 입력(`idle`, ETH ↔ WETH)이면 `null`이다.
+// 견적하지 않는 입력(`idle`, ETH ↔ WETH의 `wrap`)이면 `null`이다.
 type InputRevision = {
   signature: string | null;
   revision: number;
@@ -20,14 +20,14 @@ type InputRevision = {
 const SwapQuoteContext = createContext<SwapQuoteState | null>(null);
 
 const IDLE: SwapQuoteState = { status: "idle", quote: null };
-const NO_ROUTE: SwapQuoteState = { status: "no-route", quote: null };
 const LOADING: SwapQuoteState = { status: "loading", quote: null };
 const ERROR: SwapQuoteState = { status: "error", quote: null };
 
 /**
- * `useSwapForm()`의 입력으로 견적 상태(스펙 §4.1)를 정한다. 판정 순서는 다음과 같다.
+ * `useSwapForm()`의 입력으로 견적 상태(F3 스펙 §4.1, F7 스펙 §4.2)를 정한다. 판정 순서는 다음과 같다.
  * 1. 토큰 미선택 또는 금액이 비었거나 0이면 `idle`(입력으로 즉시 정한다)
- * 2. 두 토큰이 ETH와 WETH이면 RPC 없이 즉시 `no-route`
+ * 2. 두 토큰이 ETH와 WETH이면 RPC와 반영 대기 없이 즉시 `wrap`이고 `amountOut`은 `amountInRaw`다(F7 DoD-14, EC-9).
+ *    슬리피지를 읽지 않으므로 슬리피지가 바뀌어도 그대로다(F7 EC-10).
  * 3. 견적할 입력이 바뀐 뒤 반영 대기(300ms) 중이면 `loading`
  * 4. 그 입력의 쿼리 결과가 있으면 그 결과(다시 읽기가 실패해도 마지막 성공 결과), 없고 실패했으면 `error`, 아니면 `loading`
  *
@@ -39,6 +39,14 @@ export function SwapQuoteProvider({ children }: { children: ReactNode }) {
   const { chainId, tokenIn, tokenOut, amountInRaw } = useSwapForm();
 
   const plan = planSwapQuote({ chainId, tokenIn, tokenOut, amountInRaw });
+
+  // `wrap` 상태 객체는 `amountOut`이 같으면 같은 참조다.
+  const wrapAmountOut = plan.status === "wrap" ? plan.amountOut : null;
+  const wrapState = useMemo<SwapQuoteState | null>(
+    () =>
+      wrapAmountOut === null ? null : { status: "wrap", quote: null, amountOut: wrapAmountOut },
+    [wrapAmountOut],
+  );
 
   const readInputBase =
     plan.status === "quote" && tokenIn !== null && tokenOut !== null
@@ -85,8 +93,8 @@ export function SwapQuoteProvider({ children }: { children: ReactNode }) {
   let state: SwapQuoteState;
   if (plan.status === "idle") {
     state = IDLE;
-  } else if (plan.status === "no-route") {
-    state = NO_ROUTE;
+  } else if (wrapState !== null) {
+    state = wrapState;
   } else if (pending) {
     state = LOADING;
   } else if (read.data) {
@@ -97,11 +105,11 @@ export function SwapQuoteProvider({ children }: { children: ReactNode }) {
     state = LOADING;
   }
 
-  // 상태 값은 상수이거나 쿼리 결과 객체라 입력·결과가 같으면 같은 참조다.
+  // 상태 값은 상수, `amountOut`으로 메모한 `wrap` 객체, 쿼리 결과 객체라 입력·결과가 같으면 같은 참조다.
   return <SwapQuoteContext.Provider value={state}>{children}</SwapQuoteContext.Provider>;
 }
 
-// 스펙 §4.1 견적 상태. `quote`는 `status`가 `success`일 때만 `null`이 아니다.
+// F7 스펙 §4.2 견적 상태. `quote`는 `status`가 `success`일 때만 `null`이 아니고, `wrap`이면 `amountOut`이 있다.
 export function useSwapQuote(): SwapQuoteState {
   const value = useContext(SwapQuoteContext);
   if (!value) throw new Error("useSwapQuote must be used within SwapQuoteProvider");

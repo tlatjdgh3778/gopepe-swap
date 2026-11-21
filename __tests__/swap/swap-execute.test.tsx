@@ -683,7 +683,7 @@ describe("swap — 사용자가 클릭 시점의 견적과 최소 수령량으�
   describe("실행 함수를 허용 상태 밖에서 호출하는 경우", () => {
     /**
      * @spec EC-19
-     * @given 스텁 EIP-1193으로 Ethereum에 연결돼 있고 `renderAppHook`의 프로브로 useSwapExecution()과 주 버튼 상태를 읽는다. 표본(호출 함수 — 주 버튼 상태): `approve` — `swap-ready`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance maxUint256), `approve` — `enter-amount`(보내는 USDC, 받는 DAI, 금액 빈 값), `approve` — `quote-ready`(보내는 ETH, 받는 USDC, 금액 `1`의 견적 `success`), `approve` — `allowance-error`(보내는 USDC, 받는 DAI, 금액 `1.5`, 스텁이 allowance 요청을 transport 재시도 대상이 아닌 JSON-RPC 오류로 응답하고 현재 키에 성공 값이 없음), `approve` — `checking-allowance`(보내는 USDC, 받는 DAI, 금액 `1.5`, 스텁이 첫 allowance 응답을 붙잡음), `approve` — `amount-too-small`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance 0, 스텁이 견적 수령량을 `1`(raw)로 응답해 useAmountOutMinimum()이 `0n`),`swap` — `approve-required`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance 0), `swap` — `enter-amount`(보내는 USDC, 받는 DAI, 금액 빈 값), `swap` — `quote-ready`(보내는 ETH, 받는 USDC, 금액 `1`의 견적 `success`), `swap` — `amount-too-small`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance maxUint256, 스텁이 견적 수령량을 `1`(raw)로 응답해 useAmountOutMinimum()이 `0n`), `swap` — `price-impact-too-high`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance maxUint256, 스텁이 가격 영향 `error` 등급이 되는 견적을 응답), `approve` — `price-impact-too-high`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance 0, 스텁이 가격 영향 `error` 등급이 되는 견적을 응답)를 하나씩 반복하며, 표본마다 config·스텁·QueryClient를 새로 만들어 앱을 새로 렌더링한다. 호출 직전 지갑 요청 수를 기록한다
+     * @given 스텁 EIP-1193으로 Ethereum에 연결돼 있고 `renderAppHook`의 프로브로 useSwapExecution()과 주 버튼 상태를 읽는다. 표본(호출 함수 — 주 버튼 상태): `approve` — `swap-ready`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance maxUint256), `approve` — `enter-amount`(보내는 USDC, 받는 DAI, 금액 빈 값), `approve` — `swap-ready`(보내는 ETH, 받는 USDC, 금액 `1`), `approve` — `allowance-error`(보내는 USDC, 받는 DAI, 금액 `1.5`, 스텁이 allowance 요청을 transport 재시도 대상이 아닌 JSON-RPC 오류로 응답하고 현재 키에 성공 값이 없음), `approve` — `checking-allowance`(보내는 USDC, 받는 DAI, 금액 `1.5`, 스텁이 첫 allowance 응답을 붙잡음), `approve` — `amount-too-small`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance 0, 스텁이 견적 수령량을 `1`(raw)로 응답해 useAmountOutMinimum()이 `0n`),`swap` — `approve-required`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance 0), `swap` — `enter-amount`(보내는 USDC, 받는 DAI, 금액 빈 값), `swap` — `wrap-ready`(보내는 ETH, 받는 WETH, 금액 `1`), `swap` — `amount-too-small`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance maxUint256, 스텁이 견적 수령량을 `1`(raw)로 응답해 useAmountOutMinimum()이 `0n`), `swap` — `price-impact-too-high`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance maxUint256, 스텁이 가격 영향 `error` 등급이 되는 견적을 응답), `approve` — `price-impact-too-high`(보내는 USDC, 받는 DAI, 금액 `1.5`, allowance 0, 스텁이 가격 영향 `error` 등급이 되는 견적을 응답)를 하나씩 반복하며, 표본마다 config·스텁·QueryClient를 새로 만들어 앱을 새로 렌더링한다. 호출 직전 지갑 요청 수를 기록한다
      * @when 표본 함수를 인자 없이 호출하고 대기 중인 작업을 진행시킨다
      * @then 돌려준 Promise가 reject 없이 `undefined`로 resolve한다
      * @then 지갑 요청 수가 기록한 수에서 늘지 않는다
@@ -705,6 +705,7 @@ describe("swap — 사용자가 클릭 시점의 견적과 최소 수령량으�
         };
         const usdcDai = { tokenIn: ETHEREUM_USDC, tokenOut: ETHEREUM_DAI, amount: "1.5" };
         const ethUsdc = { tokenIn: NATIVE_ETH, tokenOut: ETHEREUM_USDC, amount: "1" };
+        const ethWeth = { tokenIn: NATIVE_ETH, tokenOut: ETHEREUM_WETH, amount: "1" };
         const max = allowanceAlways(MAX_UINT256);
         const samples: OutOfStateSample[] = [
           {
@@ -723,8 +724,9 @@ describe("swap — 사용자가 클릭 시점의 견적과 최소 수령량으�
             allowance: defaultAllowance,
           },
           {
+            // 보내는 ETH는 allowance와 무관하게 swap-ready다(F7 DoD-1). 견적은 가격 영향 normal·최소 수령량 > 0 규칙이다.
             call: "approve",
-            state: "quote-ready",
+            state: "swap-ready",
             ...ethUsdc,
             quoteRule: parityQuoteRule,
             allowance: defaultAllowance,
@@ -768,9 +770,10 @@ describe("swap — 사용자가 클릭 시점의 견적과 최소 수령량으�
             allowance: max,
           },
           {
+            // ETH→WETH는 견적 wrap이고 주 버튼은 wrap-ready다(F7 DoD-14·18).
             call: "swap",
-            state: "quote-ready",
-            ...ethUsdc,
+            state: "wrap-ready",
+            ...ethWeth,
             quoteRule: parityQuoteRule,
             allowance: max,
           },
@@ -799,7 +802,7 @@ describe("swap — 사용자가 클릭 시점의 견적과 최소 수령량으�
 
         for (const [index, sample] of samples.entries()) {
           if (index > 0) resetSample();
-          const label = `${sample.call} — ${sample.state}`;
+          const label = `#${index} ${sample.call} — ${sample.state}`;
           if (sample.allowanceMode === "fail") rpc.failAllowanceWhen(matchAllowance.any);
           const allowanceGate = sample.allowanceMode === "hold" ? rpc.holdAllowance() : null;
           const s = await renderConnectedApp({

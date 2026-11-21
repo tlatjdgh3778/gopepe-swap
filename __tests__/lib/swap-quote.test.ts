@@ -359,9 +359,9 @@ describe("견적 — 수수료 티어 중 수령량이 가장 많은 직접 풀�
      * @spec EC-6
      * @given (선택 체인, 보내는 토큰, 받는 토큰) 표본 Ethereum(1)·Base(8453)·Arbitrum(42161) 각각에서 ETH→WETH와 WETH→ETH(그 체인의 WETH)를 하나씩 반복한다
      * @when 두 토큰이 ETH와 WETH인지 판정한다
-     * @then 판정은 ETH ↔ WETH이며, 티어별 결과 없이 견적 상태가 `no-route`로 정해진다
+     * @then 판정은 ETH ↔ WETH이며, 티어별 결과 없이 견적 상태가 `wrap`이고 수령량이 보내는 정수량과 같다
      */
-    it("[EC-6] 두 토큰이 ETH와 WETH이면 두 순서와 세 체인 모두 견적 없이 no-route다", () => {
+    it("[EC-6] 두 토큰이 ETH와 WETH이면 두 순서와 세 체인 모두 견적 없이 wrap이다", () => {
       for (const chainId of CHAINS) {
         const eth = pinnedOf(chainId, "ETH");
         const weth = wethOf(chainId);
@@ -372,10 +372,11 @@ describe("견적 — 수수료 티어 중 수령량이 가장 많은 직접 풀�
         ] as const) {
           const label = `체인 ${chainId} ${tokenIn.symbol}→${tokenOut.symbol}`;
           expect(isEthWethPair({ chainId, tokenIn, tokenOut }), label).toBe(true);
-          expect(
-            planSwapQuote({ chainId, tokenIn, tokenOut, amountInRaw: 1000000000000000000n }),
-            label,
-          ).toEqual({ status: "no-route" });
+          const amountInRaw = 1000000000000000000n;
+          expect(planSwapQuote({ chainId, tokenIn, tokenOut, amountInRaw }), label).toEqual({
+            status: "wrap",
+            amountOut: amountInRaw,
+          });
         }
       }
     });

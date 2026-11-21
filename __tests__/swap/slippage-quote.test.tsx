@@ -86,13 +86,16 @@ const BASE_INPUT: QuoteInputFilter = {
 };
 
 const CONNECTED_STATES = [
+  "wrapping",
+  "unwrapping",
   "select-token",
   "enter-amount",
   "insufficient-balance",
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 // ─── 기대값(테스트 쪽 계산) ──────────────────────────────────────

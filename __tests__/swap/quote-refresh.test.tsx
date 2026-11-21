@@ -86,7 +86,10 @@ const CONNECTED_STATES = [
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrapping",
+  "unwrapping",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 // ─── 화면 ─────────────────────────────────────────────────────────
@@ -475,7 +478,7 @@ describe("견적 갱신 — 사용자가 지금 입력에 맞는 최신 견적�
      * @spec DoD-30
      * @given 가짜 타이머를 쓰고 mock 커넥터로 Ethereum에 연결돼 있으며 보내는 ETH(잔액 충분), 받는 USDC, 금액 `1`의 견적이 `success`로 표시됐다. 스텁은 다음 견적 응답을 붙잡고, 풀 때는 다른 수령량을 돌려준다. 표본 다시 읽기 계기: 15초 주기, window `focus` 이벤트를 하나씩 반복한다
      * @when 표본 계기로 다시 읽기를 일으키고, 응답이 붙잡힌 동안 확인한 뒤 응답을 푼다
-     * @then 붙잡힌 동안 useSwapQuote()의 status가 `success`이고 primary-button의 data-state가 `quote-ready`다
+     * @then 붙잡힌 동안 useSwapQuote()의 status가 `success`이고 primary-button의 data-state가 `swap-ready`다
      * @then 붙잡힌 동안 받는 칸 amount-input과 quote-amount-out의 data-amount-out-raw가 기존 값이고 quote-skeleton이 없다
      * @then 응답을 풀면 받는 칸 amount-input과 quote-amount-out의 data-amount-out-raw가 새 스텁 값으로 바뀐다
      */
@@ -501,7 +504,8 @@ describe("견적 갱신 — 사용자가 지금 입력에 맞는 최신 견적�
           await settlePendingWork();
 
           expect(result.current.quote.status, trigger).toBe("success");
-          expect(primaryState(), trigger).toBe("quote-ready");
+          // Ethereum ETH→USDC 기본 스텁 응답의 가격 영향은 `normal` 등급이고 최소 수령량은 0보다 크다.
+          expect(primaryState(), trigger).toBe("swap-ready");
           expect(outAmountRaw(), trigger).toBe(oldRaw);
           expect(detailsAmountRaw(), trigger).toBe(oldRaw);
           expect(skeletonCount(), trigger).toBe(0);
@@ -556,7 +560,7 @@ describe("견적 갱신 — 사용자가 지금 입력에 맞는 최신 견적�
      * @given 가짜 타이머를 쓰고 mock 커넥터로 Ethereum에 연결돼 있으며 보내는 ETH(잔액 충분), 받는 USDC, 금액 `1`의 견적이 `success`로 표시됐다. 그 뒤 스텁이 견적 요청을 transport 재시도 대상이 아닌 JSON-RPC 오류로 응답하게 바꿨다. 표본 자동 갱신 계기: 15초 주기, window `focus` 이벤트를 하나씩 반복한다
      * @when 표본 계기로 다시 읽기를 일으키고 실패 응답을 받기를 기다린다
      * @then useSwapQuote()의 status가 `success`다
-     * @then primary-button의 data-state가 `quote-ready`다
+     * @then primary-button의 data-state가 `swap-ready`다
      * @then 받는 칸 amount-input과 quote-amount-out의 data-amount-out-raw가 기존 값이다
      * @then quote-details가 렌더링돼 있고 quote-skeleton이 없다
      */
@@ -589,7 +593,8 @@ describe("견적 갱신 — 사용자가 지금 입력에 맞는 최신 견적�
           await settlePendingWork();
 
           expect(result.current.quote.status, trigger).toBe("success");
-          expect(primaryState(), trigger).toBe("quote-ready");
+          // Ethereum ETH→USDC 기본 스텁 응답의 가격 영향은 `normal` 등급이고 최소 수령량은 0보다 크다.
+          expect(primaryState(), trigger).toBe("swap-ready");
           expect(outAmountRaw(), trigger).toBe(oldRaw);
           expect(detailsAmountRaw(), trigger).toBe(oldRaw);
           expect(quoteDetails(), trigger).not.toBeNull();

@@ -1,5 +1,4 @@
 import type { Token } from "@/config/tokens";
-import type { SwapQuoteStatus } from "@/lib/swap-quote";
 
 // 연결 상태에서 주 버튼이 표시하는 입력 상태. 복원 중·미연결은 화면이 F1 분기로 먼저 처리한다.
 export type SwapInputState =
@@ -62,37 +61,4 @@ export function getSwapInputState({
     return "insufficient-balance";
   }
   return "input-valid";
-}
-
-// 입력 상태가 `input-valid`일 때 주 버튼이 표시하는 견적 상태(스펙 §4.2).
-export type QuoteButtonState = "quoting" | "no-route" | "quote-error" | "quote-ready";
-
-// 연결 상태의 주 버튼 상태. `input-valid`는 견적 상태로 대체한다.
-export type SwapButtonState = Exclude<SwapInputState, "input-valid"> | QuoteButtonState;
-
-const QUOTE_BUTTON_STATES: Record<SwapQuoteStatus, QuoteButtonState> = {
-  // `idle`은 입력이 미완성일 때만이라 `input-valid`와 함께 오지 않는다. 오면 견적 전 대기로 본다.
-  idle: "quoting",
-  loading: "quoting",
-  "no-route": "no-route",
-  error: "quote-error",
-  success: "quote-ready",
-};
-
-export type SwapButtonStateParams = {
-  inputState: SwapInputState;
-  quoteStatus: SwapQuoteStatus;
-};
-
-/**
- * 연결 상태의 주 버튼 상태를 합성한다. `select-token`, `enter-amount`, `insufficient-balance`는
- * 견적 상태보다 앞서고, `input-valid`이면 견적 상태 `loading` → `quoting`, `no-route` → `no-route`,
- * `error` → `quote-error`, `success` → `quote-ready`다. 가격 영향 등급은 판정에 쓰지 않는다.
- */
-export function getSwapButtonState({
-  inputState,
-  quoteStatus,
-}: SwapButtonStateParams): SwapButtonState {
-  if (inputState !== "input-valid") return inputState;
-  return QUOTE_BUTTON_STATES[quoteStatus];
 }

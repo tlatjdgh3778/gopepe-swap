@@ -44,13 +44,16 @@ const FIXED_AMOUNT_OUT = 1_234_567_891_234n;
 
 // 연결된 지갑의 주 버튼 상태(F2·F3)
 const CONNECTED_STATES = [
+  "wrapping",
+  "unwrapping",
   "select-token",
   "enter-amount",
   "insufficient-balance",
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 let rpc: BalanceRpcStub;

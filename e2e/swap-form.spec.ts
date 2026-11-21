@@ -405,10 +405,9 @@ test.describe("스왑 입력 — 사용자가 보낼 토큰·금액과 받을 �
      * @spec DoD-38
      * @given 러너가 anvil에서 mock 계정에 USDC 잔액을 절대값으로 주입하고 그 정수를 anvil에서 직접 읽었다. mock 커넥터로 지갑이 연결되어 있고 보내는 칸 USDC, 받는 칸에 다른 토큰이 선택되어 있으며 카드 잔액 읽기가 끝났다
      * @when 사용자가 0보다 크고 러너가 읽은 USDC 잔액 이하인 금액을 보내는 칸에 입력한다 (표본: 잔액보다 작은 값, 잔액과 같은 값)
-     * @then 주 버튼 상태가 견적 상태(`quoting`·`no-route`·`quote-error`·`quote-ready`) 중 하나다
-     * @then 주 버튼이 비활성이다
+     * @then 주 버튼 상태가 select-token·enter-amount·insufficient-balance가 아닌 견적 뒤 상태 중 하나다
      */
-    test("[DoD-38] 토큰·금액·잔액 조건을 모두 만족하면 주 버튼이 견적 상태(quoting·no-route·quote-error·quote-ready) 중 하나이고 비활성이다", async ({
+    test("[DoD-38] 토큰·금액·잔액 조건을 모두 만족하면 주 버튼이 견적 뒤 상태 중 하나다", async ({
       page,
     }) => {
       const usdcBalance = await injectUsdc(DOD38_USDC_RAW);
@@ -427,7 +426,6 @@ test.describe("스왑 입력 — 사용자가 보낼 토큰·금액과 받을 �
           await expect(amountInput(page, "in")).toHaveValue(amount);
 
           await expect(primaryButton(page)).toHaveAttribute("data-state", QUOTE_PRIMARY_STATE);
-          await expect(primaryButton(page)).toBeDisabled();
         });
       }
     });

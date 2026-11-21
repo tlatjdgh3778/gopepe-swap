@@ -34,7 +34,7 @@ import {
 // 골격: 앱 전체(실제 wagmi·Provider·화면)를 렌더링하고 `primary-button`의 `data-state`(스펙 §4.2)로 판정한다.
 // 지갑은 wagmi mock 커넥터 또는 스텁 EIP-1193, RPC는 전역 fetch 스텁(카드 잔액과 견적 응답)이다.
 // 표본 견적 상태는 스텁으로 만든다: loading(응답 붙잡기), success(기본 성공), no-route(네 티어 하위 호출 모두 revert), error(transport 재시도 대상이 아닌 JSON-RPC 오류).
-// 견적 상태별 주 버튼(quoting·no-route·quote-error·quote-ready)은 quote-display의 상태별 case가, 미연결·잔액 부족의 success 표본은 quote-read의 DoD-6·DoD-7 case가 맡는다.
+// 견적 상태별 주 버튼(quoting·no-route·quote-error·price-impact-too-high)은 quote-display의 상태별 case가, 미연결·잔액 부족의 success 표본은 quote-read의 DoD-6·DoD-7 case가 맡는다.
 
 const CASE_TIMEOUT_MS = 30_000;
 const MULTI_SAMPLE_TIMEOUT_MS = 90_000;
@@ -71,7 +71,10 @@ const CONNECTED_STATES = [
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrapping",
+  "unwrapping",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 // ─── 화면 ─────────────────────────────────────────────────────────
@@ -302,9 +305,9 @@ describe("주 버튼 — 사용자가 F2 입력 상태를 견적 상태보다 �
 
     /**
      * @spec DoD-31
-     * @given mock 커넥터로 Ethereum에 연결돼 있고 보내는 ETH(잔액 충분), 받는 USDC, 금액 `1`의 견적이 `success`로 표시돼 primary-button이 `quote-ready`다. 표본 변경과 기대 상태: 금액을 지움 → `enter-amount`, 금액 `0`을 입력함 → `enter-amount`, 선택 체인을 Base로 바꿔 받는 칸이 미선택이 됨 → `select-token`을 하나씩 반복한다
+     * @given mock 커넥터로 Ethereum에 연결돼 있고 보내는 ETH(잔액 충분), 받는 USDC, 금액 `1`의 견적이 `success`로 표시돼 primary-button이 `swap-ready`다. 표본 변경과 기대 상태: 금액을 지움 → `enter-amount`, 금액 `0`을 입력함 → `enter-amount`, 선택 체인을 Base로 바꿔 받는 칸이 미선택이 됨 → `select-token`을 하나씩 반복한다
      * @when 표본 변경을 일으킨다
-     * @then primary-button의 data-state가 표본의 기대 상태다(견적 상태 `quote-ready`가 남지 않는다)
+     * @then primary-button의 data-state가 표본의 기대 상태다(견적 상태 `swap-ready`가 남지 않는다)
      */
     it(
       "[DoD-31] 토큰 미선택이나 금액이 비었거나 0이면 select-token·enter-amount다",
@@ -312,28 +315,29 @@ describe("주 버튼 — 사용자가 F2 입력 상태를 견적 상태보다 �
         const { result } = await renderMockConnectedApp();
         await chooseToken("out", ETHEREUM_USDC);
 
-        async function reachQuoteReady(label: string) {
+        async function reachSwapReady(label: string) {
           await typeAmount("1");
           await waitUntil(() => expect(result.current.quote.status, label).toBe("success"));
-          await waitUntil(() => expect(primaryState(), label).toBe("quote-ready"));
+          // Ethereum ETH→USDC 기본 스텁 응답의 가격 영향은 `normal` 등급이고 최소 수령량은 0보다 크다.
+          await waitUntil(() => expect(primaryState(), label).toBe("swap-ready"));
         }
 
         // 금액을 지움 → enter-amount
-        await reachQuoteReady("금액 지움 전");
+        await reachSwapReady("금액 지움 전");
         fireEvent.change(amountInput(), { target: { value: "" } });
         expect(primaryState(), "금액 지움 직후").toBe("enter-amount");
         await settlePendingWork();
         expect(primaryState(), "금액 지움").toBe("enter-amount");
 
         // 금액 0 → enter-amount
-        await reachQuoteReady("금액 0 전");
+        await reachSwapReady("금액 0 전");
         fireEvent.change(amountInput(), { target: { value: "0" } });
         expect(primaryState(), "금액 0 직후").toBe("enter-amount");
         await settlePendingWork();
         expect(primaryState(), "금액 0").toBe("enter-amount");
 
         // 선택 체인을 Base로 바꿔 받는 칸이 미선택 → select-token
-        await reachQuoteReady("체인 변경 전");
+        await reachSwapReady("체인 변경 전");
         act(() => result.current.selected.setSelectedChainId(base.id));
         expect(result.current.form.tokenOut).toBeNull();
         expect(primaryState(), "체인 변경 직후").toBe("select-token");
