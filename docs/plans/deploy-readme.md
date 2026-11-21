@@ -118,7 +118,7 @@
 ### T-8 — PR 검사와 preview 아이콘 확인
 
 - 사이드: 검증(사용자 수동 + 에이전트 `gh`)
-- 상태: 대기
+- 상태: 완료
 - 목적: F8 PR에서 required checks가 통과하는지와 preview 배포의 탭 아이콘을 확인한다
 - 선행: 9단계 커밋·push·PR 생성(사용자 승인), T-3
 - 연결 항목: DoD-11, DoD-16, DoD-20
@@ -127,7 +127,7 @@
 - 완료 조건: `gh pr checks`에서 `check`·`e2e`가 required로 통과한다. GitHub deployment statuses에서 F8 브랜치 preview URL을 얻고, 사용자가 그 URL의 탭 아이콘을 확인한다. 결과를 기록한다 — 검증: 확인 절차, 명령
 - 실행 명령: `gh pr checks {PR} --required`, `gh api repos/tlatjdgh3778/gopepe-swap/deployments --jq '.[] | select(.environment != "Production") | {id, sha, environment}'`
 - 수정 금지: 제품 코드, 테스트 코드
-- 구현 기록: 없음
+- 구현 기록: 오케스트레이터 수행(2026-11-21). PR #10(커밋 `3912c5f`). GitHub deployments는 Vercel Git 연동에서도 0건이라 계획의 `gh api .../deployments` 대신 Vercel PR 코멘트·커밋 status에서 preview URL `https://gopepe-swap-git-feat-deploy-readme-seonghos-projects-03a1ce1f.vercel.app`을 얻었다. ego-browser(로그인 프로필)로 열어 title `GOPEPE Swap`, description 스펙 문자열, icon link 2개(`/favicon.ico` 32x32 `image/vnd.microsoft.icon` 200, `/icon.svg` any `image/svg+xml` 200) 확인. 사용자가 preview 탭에서 'G' 아이콘을 확인했다(DoD-16 머지 전 수동 확인). PR 체크 `Vercel`·`Vercel Preview Comments` pass. required checks `check`·`e2e` 결과는 이 기록 커밋 이후에 나오므로 PR #10 코멘트에 남긴다
 
 ### T-9 — 머지 후 production 확인과 v1.0.0 태그
 
