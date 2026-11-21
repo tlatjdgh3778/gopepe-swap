@@ -21,6 +21,7 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "GOPEPE Swap",
+  description: "이더리움·Base·Arbitrum의 Uniswap V3 단일 홉 스왑",
 };
 
 export default async function RootLayout({ children }: LayoutProps<"/">) {
