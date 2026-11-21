@@ -95,7 +95,10 @@ const CONNECTED_STATES = [
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrapping",
+  "unwrapping",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 // ─── 화면 ─────────────────────────────────────────────────────────
@@ -383,7 +386,7 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
      * @then useSwapQuote()의 status가 `success`다
      * @then 받는 칸 amount-input의 data-amount-out-raw가 스텁이 고른 티어의 수령량 10진 문자열이다
      * @then quote-details가 렌더링돼 있다
-     * @then primary-button의 data-state가 `disconnected`다(견적 상태 `quote-ready`보다 앞선다)
+     * @then primary-button의 data-state가 `disconnected`다(견적 상태 `swap-ready`보다 앞선다)
      */
     it(
       "[DoD-6][DoD-31] 지갑 미연결 상태에서도 견적하고 주 버튼은 disconnected다",
@@ -424,7 +427,7 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
      * @then useSwapQuote()의 status가 `success`다
      * @then 받는 칸 amount-input의 data-amount-out-raw가 스텁이 고른 티어의 수령량 10진 문자열이다
      * @then quote-details 안의 quote-amount-out, quote-price-impact, quote-fee-tier가 표시돼 있다
-     * @then primary-button의 data-state가 `insufficient-balance` 그대로다(견적 상태 `quote-ready`보다 앞선다)
+     * @then primary-button의 data-state가 `insufficient-balance` 그대로다(견적 상태 `swap-ready`보다 앞선다)
      */
     it(
       "[DoD-7][DoD-31] 잔액 부족 상태에서도 견적하고 받는 칸과 견적 정보를 표시하며 주 버튼은 insufficient-balance다",
@@ -468,12 +471,12 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
      * @spec EC-6
      * @given 가짜 타이머를 쓰고 mock 커넥터로 Ethereum에 연결돼 있으며 보내는 토큰 잔액이 금액보다 크게 읽혔다. 표본 순서: 보내는 ETH·받는 WETH, 보내는 WETH·받는 ETH를 하나씩 반복하며 금액 `1`을 입력한다
      * @when 타이머를 진행하지 않은 채 확인하고, 이어서 가짜 시계를 300ms와 15초를 넘게 진행한다
-     * @then 타이머를 진행하지 않은 상태에서 useSwapQuote()의 status가 `no-route`이고 quote가 `null`이다
-     * @then 타이머를 진행하지 않은 상태에서 primary-button의 data-state가 `no-route`이고 quote-skeleton이 없다
+     * @then 타이머를 진행하지 않은 상태에서 useSwapQuote()의 status가 `wrap`이고 quote가 `null`이며 amountOut이 `amountInRaw`다
+     * @then 타이머를 진행하지 않은 상태에서 primary-button의 data-state가 보내는 ETH·받는 WETH이면 `wrap-ready`, 보내는 WETH·받는 ETH이면 `unwrap-ready`이고 활성이며 quote-skeleton이 없다
      * @then 300ms와 15초를 넘게 진행한 뒤에도 카드 잔액 읽기(eth_getBalance·balanceOf·잔액 aggregate3)로 분류되지 않는 모든 JSON-RPC 항목(메서드 무관)이 0건이다
      */
     it(
-      "[EC-6] ETH와 WETH는 두 순서 모두 RPC 요청과 반영 대기 없이 즉시 no-route다",
+      "[EC-6] ETH와 WETH는 두 순서 모두 RPC 요청과 반영 대기 없이 즉시 wrap이고 wrap-ready·unwrap-ready다",
       async () => {
         const samples = ["eth-to-weth", "weth-to-eth"] as const;
         for (const [index, sample] of samples.entries()) {
@@ -502,9 +505,15 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
 
           // 타이머를 진행하지 않은 상태
           expect(amountInput().value, sample).toBe("1");
-          expect(result.current.quote.status, sample).toBe("no-route");
-          expect(result.current.quote.quote, sample).toBeNull();
-          expect(primaryState(), sample).toBe("no-route");
+          const quoteNow = result.current.quote;
+          expect(quoteNow.status, sample).toBe("wrap");
+          expect(quoteNow.quote, sample).toBeNull();
+          // 금액 `1`(ETH·WETH 모두 소수 자릿수 18)의 amountInRaw
+          expect(quoteNow.status === "wrap" ? quoteNow.amountOut : null, sample).toBe(ONE_ETH);
+          expect(primaryState(), sample).toBe(
+            sample === "eth-to-weth" ? "wrap-ready" : "unwrap-ready",
+          );
+          expect(primaryButton().disabled, sample).toBe(false);
           expect(skeletonCount(), sample).toBe(0);
 
           // 300ms와 15초를 넘게 진행
@@ -516,7 +525,7 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
           });
           await settlePendingWork();
           expect(rpc.requests(match.since(seq, matchQuote.notBalance)), sample).toEqual([]);
-          expect(result.current.quote.status, sample).toBe("no-route");
+          expect(result.current.quote.status, sample).toBe("wrap");
           vi.useRealTimers();
         }
       },
@@ -647,7 +656,7 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
      * @then useSwapQuote()의 status가 `success`다
      * @then quote.fee와 quote-fee-tier의 data-fee가 성공한 티어 중 수령량이 가장 많은 티어(DoD-2 규칙)다
      * @then quote.amountOut과 받는 칸 amount-input의 data-amount-out-raw가 그 티어의 스텁 수령량이다
-     * @then primary-button의 data-state가 `quote-ready`다
+     * @then primary-button의 data-state가 `swap-ready`다
      */
     it(
       "[EC-16][DoD-2] 고르지 않은 티어의 견적과 slot0만 실패하면 success이고 남은 후보에서 티어를 고른다",
@@ -686,7 +695,8 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
             String(expected.fee),
           );
           expect(quote.amountOut, form).toBe(expected.amountOut);
-          expect(primaryState(), form).toBe("quote-ready");
+          // Ethereum ETH→USDC 기본 스텁 응답의 가격 영향은 `normal` 등급이고 최소 수령량은 0보다 크다.
+          expect(primaryState(), form).toBe("swap-ready");
         }
       },
       CASE_TIMEOUT_MS,

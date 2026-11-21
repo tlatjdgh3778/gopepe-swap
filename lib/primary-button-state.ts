@@ -6,20 +6,23 @@ import { getPriceImpactSeverity } from "@/lib/quote-format";
 import { type SwapInputState, getSwapInputState } from "@/lib/swap-input-state";
 import { isNativeToken } from "@/lib/token-amount";
 
-// 주 버튼 상태(스펙 §4.3 `primary-button[data-state]`). 판정 순서(DoD-5)와 같은 순서다.
+// 주 버튼 상태(F7 스펙 §4.3 `primary-button[data-state]`, 21개). 판정 순서(F7 DoD-6)와 같은 순서다.
 export const PRIMARY_BUTTON_STATES = [
   "restoring",
   "disconnected",
   "awaiting-signature",
   "approving",
   "swapping",
+  "wrapping",
+  "unwrapping",
   "select-token",
   "enter-amount",
   "insufficient-balance",
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrap-ready",
+  "unwrap-ready",
   "price-impact-too-high",
   "amount-too-small",
   "allowance-error",
@@ -33,8 +36,14 @@ export type PrimaryButtonState = (typeof PRIMARY_BUTTON_STATES)[number];
 // 주 버튼이 읽는 지갑 상태(`useWalletRestore().status`와 같은 값).
 export type PrimaryButtonWalletStatus = "restoring" | "disconnected" | "connected";
 
-// `useSwapExecution().phase`(스펙 §4.2).
-export type SwapExecutionPhase = "idle" | "awaiting-signature" | "approving" | "swapping";
+// `useSwapExecution().phase`(F7 스펙 §4.2).
+export type SwapExecutionPhase =
+  | "idle"
+  | "awaiting-signature"
+  | "approving"
+  | "swapping"
+  | "wrapping"
+  | "unwrapping";
 
 // `useTokenAllowance().status`(스펙 §4.2).
 export type TokenAllowanceStatus = "idle" | "loading" | "success" | "error";
@@ -45,8 +54,8 @@ export type PrimaryButtonStateParams = {
   // `getSwapInputState` 결과.
   inputState: SwapInputState;
   quoteStatus: SwapQuoteStatus;
-  // 보내는 토큰이나 받는 토큰이 ETH이면 참.
-  isEthPair: boolean;
+  // 보내는 토큰이 ETH이면 참.
+  isEthIn: boolean;
   // 견적 `success`일 때의 가격 영향 등급. 그 밖에는 `null`.
   priceImpactSeverity: PriceImpactSeverity | null;
   // `useAmountOutMinimum()`.
@@ -59,12 +68,18 @@ export type PrimaryButtonStateParams = {
 };
 
 /**
- * 주 버튼 상태. DoD-5의 순서에서 먼저 해당하는 상태다.
- * 복원 중 → 미연결 → 실행 phase → 입력 상태(`select-token`·`enter-amount`·`insufficient-balance`) →
- * 견적 상태(`loading`·`idle` → `quoting`, `no-route`, `error` → `quote-error`) → 견적 `success`에서
- * ETH가 낀 페어는 `quote-ready`(DoD-6), ERC-20↔ERC-20 페어는 가격 영향 `error` 등급(DoD-7) →
- * 최소 수령량 `0n`(DoD-8) → allowance 읽기 실패(EC-14) → 읽는 중(DoD-9) → `amountInRaw`와 비교(DoD-10·11)다.
- * 스펙상 오지 않는 조합: 입력이 유효한데 견적 `idle`이면 `quoting`, ERC-20↔ERC-20 페어 견적 `success`에서
+ * 주 버튼 상태. F7 DoD-6의 순서에서 먼저 해당하는 상태다.
+ * 복원 중 → 미연결 → 실행 phase(`awaiting-signature`·`approving`·`swapping`·`wrapping`·`unwrapping`) →
+ * 입력 상태(`select-token`·`enter-amount`·`insufficient-balance`) →
+ * 견적 상태(`loading`·`idle` → `quoting`, `no-route`, `error` → `quote-error`,
+ * `wrap` → 보내는 토큰이 ETH이면 `wrap-ready`(F7 DoD-18), 아니면 `unwrap-ready`(F7 DoD-19)) →
+ * 견적 `success`에서 가격 영향 `error` 등급(F7 DoD-2) → 최소 수령량 `0n`(F7 DoD-3) →
+ * 보내는 토큰이 ETH이면 allowance와 무관하게 `swap-ready`(F7 DoD-1) →
+ * 그 밖(보내는 토큰이 ERC-20, F7 DoD-4)은 allowance 읽기 실패(F5 EC-14) → 읽는 중(F5 DoD-9) →
+ * `amountInRaw`와 비교(F5 DoD-10·11)다.
+ * 잔액 부족은 금액 정수가 잔액 정수보다 클 때만이라, 보내는 ETH 금액이 잔액과 같아도 막지 않는다(F7 EC-4).
+ * 스펙상 오지 않는 조합: 입력이 유효한데 견적 `idle`이면 `quoting`, 견적 `wrap`은 ETH ↔ WETH에서만 오므로
+ * 보내는 토큰이 ETH가 아니면 `unwrap-ready`, 보내는 토큰이 ERC-20인 견적 `success`에서
  * allowance `idle`이거나 `success`인데 값·`amountInRaw`가 `null`이면 `checking-allowance`다.
  */
 export function getPrimaryButtonState({
@@ -72,7 +87,7 @@ export function getPrimaryButtonState({
   phase,
   inputState,
   quoteStatus,
-  isEthPair,
+  isEthIn,
   priceImpactSeverity,
   amountOutMinimum,
   allowanceStatus,
@@ -92,13 +107,16 @@ export function getPrimaryButtonState({
       return "no-route";
     case "error":
       return "quote-error";
+    case "wrap":
+      return isEthIn ? "wrap-ready" : "unwrap-ready";
     case "success":
       break;
   }
 
-  if (isEthPair) return "quote-ready";
   if (priceImpactSeverity === "error") return "price-impact-too-high";
   if (amountOutMinimum === 0n) return "amount-too-small";
+  // 보내는 토큰이 ETH이면 approve가 필요 없다(F7 DoD-1).
+  if (isEthIn) return "swap-ready";
   if (allowanceStatus === "error") return "allowance-error";
   if (allowanceStatus !== "success" || allowance === null || amountInRaw === null) {
     return "checking-allowance";
@@ -106,26 +124,21 @@ export function getPrimaryButtonState({
   return allowance < amountInRaw ? "approve-required" : "swap-ready";
 }
 
-// 활성 상태. 미연결(지갑 연결 모달, F1)과 `approve-required`·`swap-ready`만 누를 수 있다.
+// 활성 상태(F7 스펙 §4.3). 미연결(지갑 연결 모달, F1)과 `wrap-ready`·`unwrap-ready`·`approve-required`·`swap-ready`만
+// 누를 수 있다.
 const ENABLED_PRIMARY_BUTTON_STATES: ReadonlySet<PrimaryButtonState> = new Set([
   "disconnected",
+  "wrap-ready",
+  "unwrap-ready",
   "approve-required",
   "swap-ready",
 ]);
 
 /**
- * 주 버튼을 누를 수 있으면 참이다. `disconnected`, `approve-required`, `swap-ready`만 활성이다.
+ * 주 버튼을 누를 수 있으면 참이다. `disconnected`, `wrap-ready`, `unwrap-ready`, `approve-required`, `swap-ready`만 활성이다.
  */
 export function isPrimaryButtonEnabled(state: PrimaryButtonState): boolean {
   return ENABLED_PRIMARY_BUTTON_STATES.has(state);
-}
-
-/**
- * 보내는 토큰이나 받는 토큰이 ETH이면 참이다. 토큰이 하나라도 없으면 거짓이다.
- */
-export function isEthPair(tokenIn: Token | null, tokenOut: Token | null): boolean {
-  if (tokenIn === null || tokenOut === null) return false;
-  return isNativeToken(tokenIn) || isNativeToken(tokenOut);
 }
 
 export type PrimaryButtonSourceParams = {
@@ -143,7 +156,7 @@ export type PrimaryButtonSourceParams = {
 
 /**
  * 화면의 원래 값(토큰·금액·잔액, 견적, 최소 수령량, allowance)으로 `getPrimaryButtonState`의 입력을 만든다.
- * 입력 상태는 `getSwapInputState`, ETH 페어는 `isNativeToken`, 등급은 `getPriceImpactSeverity`로 정한다.
+ * 입력 상태는 `getSwapInputState`, 보내는 토큰이 ETH인지는 `isNativeToken`, 등급은 `getPriceImpactSeverity`로 정한다.
  */
 export function getPrimaryButtonStateParams({
   walletStatus,
@@ -161,7 +174,7 @@ export function getPrimaryButtonStateParams({
     phase,
     inputState: getSwapInputState({ tokenIn, tokenOut, amountInRaw, balanceInRaw }),
     quoteStatus: quote.status,
-    isEthPair: isEthPair(tokenIn, tokenOut),
+    isEthIn: tokenIn !== null && isNativeToken(tokenIn),
     priceImpactSeverity:
       quote.status === "success" ? getPriceImpactSeverity(quote.quote.priceImpactBps) : null,
     amountOutMinimum,

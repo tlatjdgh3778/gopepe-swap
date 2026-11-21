@@ -28,7 +28,7 @@ export type TxStatusValue =
 // 같은 노드가 상태만 바꾸므로 종류를 먼저 기다린 뒤 상태를 기다린다(pending → 결과).
 export async function expectTxStatus(
   page: Page,
-  expected: { status: TxStatusValue; kind?: "approve" | "swap" },
+  expected: { status: TxStatusValue; kind?: "approve" | "swap" | "wrap" | "unwrap" },
   timeout: number,
 ): Promise<void> {
   if (expected.kind !== undefined) {

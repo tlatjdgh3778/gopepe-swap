@@ -19,8 +19,8 @@ import { writeContract } from "wagmi/actions";
 
 import type { SupportedChainId } from "@/config/chains";
 
-import { CONTRACTS_BY_CHAIN } from "@/config/contracts";
 import { swapRouter02Abi } from "@/config/uniswap-v3";
+import { wethAbi } from "@/config/weth";
 import { useAmountOutMinimum } from "@/hooks/use-amount-out-minimum";
 import { useEnsureChain } from "@/hooks/use-ensure-chain";
 import { CARD_BALANCE_QUERY_KEY, getCardBalanceQueryKey } from "@/hooks/use-token-balance";
@@ -34,13 +34,15 @@ import {
 } from "@/lib/primary-button-state";
 import {
   buildApproveRequest,
-  buildExactInputSingleParams,
-  buildSwapMulticallArgs,
+  buildSwapTransactionRequest,
+  buildUnwrapRequest,
+  buildWrapRequest,
   getSwapDeadline,
 } from "@/lib/swap-transaction";
 import { readTokenBalance } from "@/lib/token-balances";
 import {
   type ReceiptOutcome,
+  type TxKind,
   type TxResult,
   classifyChainSwitchError,
   classifySendError,
@@ -59,25 +61,37 @@ import {
 import { useSwapQuote } from "./swap-quote-provider";
 import { useTokenAllowance } from "./token-allowance-provider";
 
-export type SwapExecutionTxKind = "approve" | "swap";
-
 export type PendingTx = {
-  kind: SwapExecutionTxKind;
+  kind: TxKind;
   chainId: SupportedChainId;
   hash: Hash;
 };
 
-export type { TxResult } from "@/lib/tx-result";
+export type { TxKind, TxResult } from "@/lib/tx-result";
 
-// F5 스펙 §4.2 `useSwapExecution()`에 F6 스펙 §4.1의 `result`·`dismissResult`를 더했다.
-// `pendingTx`는 `phase`가 `approving`·`swapping`일 때만 `null`이 아니고, 결과가 나올 때까지 지갑이 돌려준 원 해시다.
-// `approve`·`swap`은 reject하지 않고 `void`로 resolve한다. 실행 결과는 `result`로 드러난다.
+// 트랜잭션 해시를 받은 뒤 영수증이 나올 때까지의 phase(F5 DoD-18, F7 DoD-27·28).
+const PENDING_PHASE_BY_KIND: Record<
+  TxKind,
+  Exclude<SwapExecutionPhase, "idle" | "awaiting-signature">
+> = {
+  approve: "approving",
+  swap: "swapping",
+  wrap: "wrapping",
+  unwrap: "unwrapping",
+};
+
+// F7 스펙 §4.2 `useSwapExecution()`(F5 스펙 §4.2에 F6 스펙 §4.1의 `result`·`dismissResult`, F7의 `wrap`·`unwrap`을 더했다).
+// `pendingTx`는 `phase`가 `approving`·`swapping`·`wrapping`·`unwrapping`일 때만 `null`이 아니고,
+// 결과가 나올 때까지 지갑이 돌려준 원 해시다.
+// `approve`·`swap`·`wrap`·`unwrap`은 reject하지 않고 `void`로 resolve한다. 실행 결과는 `result`로 드러난다.
 export type SwapExecutionValue = {
   phase: SwapExecutionPhase;
   pendingTx: PendingTx | null;
   result: TxResult | null;
   approve: () => Promise<void>;
   swap: () => Promise<void>;
+  wrap: () => Promise<void>;
+  unwrap: () => Promise<void>;
   dismissResult: () => void;
 };
 
@@ -100,19 +114,22 @@ const IDLE_EXECUTION: ExecutionState = {
 const SwapExecutionContext = createContext<SwapExecutionValue | null>(null);
 
 /**
- * approve·swap 전송, 진행 상태, 영수증 후처리를 맡는다.
- * - 클릭 시점의 주 버튼 상태가 `approve-required`(approve)·`swap-ready`(swap)일 때만 실행하고, 진행 중이면 지갑 요청 없이 끝낸다(EC-19).
- *   리렌더 전 두 번째 호출은 ref 잠금으로 막는다(EC-6).
- * - 전송 인자는 클릭 시점 값이다(EC-11). deadline만 전송 직전 시각으로 정한다(DoD-17).
+ * approve·swap·wrap·unwrap 전송, 진행 상태, 영수증 후처리를 맡는다.
+ * - 클릭 시점의 주 버튼 상태가 `approve-required`(approve)·`swap-ready`(swap)·`wrap-ready`(wrap)·`unwrap-ready`(unwrap)일 때만
+ *   실행하고, 진행 중이면 어떤 kind든 지갑 요청 없이 끝낸다(EC-19, F7 EC-7). 리렌더 전 두 번째 호출은 ref 잠금으로 막는다(EC-6).
+ * - 전송 인자는 클릭 시점 값이다(EC-11, F7 EC-8). swap의 deadline만 전송 직전 시각으로 정한다(DoD-17).
+ *   보내는 토큰이 ETH인 swap은 `value`로 `amountInRaw`를 싣고, 받는 토큰이 ETH인 swap은 `unwrapWETH9`로 ETH를 받는다
+ *   (F7 DoD-7~9). 그 밖의 swap과 unwrap은 `value`를 싣지 않는다(F7 DoD-10·22). wrap·unwrap에는 deadline이 없다.
  * - 전송 전에 `useEnsureChain()`을 기다리고, 그 뒤 선택 체인이 클릭 시점 체인과 다르면 보내지 않는다(DoD-21, EC-21).
  *   전송은 클릭 시점 체인 `chainId`로 하며 simulate하지 않는다.
  * - 영수증은 트랜잭션 체인 클라이언트로 시간 제한 없이 기다린다(EC-8, EC-18). 교체는 `onReplaced` 사유로만 판단하고
  *   전송 전 nonce 조회나 `replacement` 인자는 쓰지 않는다(F6 EC-29).
- * - 영수증 성공(가속 포함): swap이면 선택 체인·계정이 트랜잭션과 같을 때 금액을 비우고(DoD-19, EC-9) 잔액을 무효화한다(DoD-20).
+ * - 영수증 성공(가속 포함): swap·wrap·unwrap이면 선택 체인·계정이 트랜잭션과 같을 때 금액을 비우고
+ *   (DoD-19, EC-9, F7 DoD-32, EC-11) 잔액을 무효화한다(DoD-20, F7 DoD-33). 성공 결과에 `balanceDropped`가 없다.
  *   금액 비우기는 앱 전용 동작이라 결과를 지우지 않는다(F6 EC-18).
  *   approve는 allowance 무효화와 클릭 시점 보내는 토큰 잔액 키(tx 체인·계정) 새 읽기를 함께 기다리고,
  *   클릭 시점 잔액과 비교해 `balanceDropped`를 정한다(F6 DoD-10·11·12, EC-15·16·17).
- *   approve·swap 모두 allowance 다시 읽기가 끝난 뒤 결과 기록과 `idle` 전환을 한 번에 한다(DoD-14, DoD-30). approve 뒤 swap을 자동으로 보내지 않는다.
+ *   모든 kind가 allowance 다시 읽기가 끝난 뒤 결과 기록과 `idle` 전환을 한 번에 한다(DoD-14, DoD-30). approve 뒤 swap을 자동으로 보내지 않는다.
  * - revert·영수증 대기 reject·교체: allowance와 잔액을 무효화하고 기다리지 않은 채 결과를 기록하고 `idle`로 돌아간다(EC-4, EC-5, F6 EC-7·8·9·11).
  * - 트랜잭션을 보내지 못한 종료는 다시 읽지 않고 `idle`로 돌아간다. 체인 확인 단계 오류는 `rejected`·`chain-switch-failed`,
  *   전송 단계 오류는 `rejected`·`send-failed`로 기록하고(F6 EC-1~4), 체인 불일치(EC-21)는 결과 없이 끝난다(F6 EC-6).
@@ -157,7 +174,7 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
     }),
   );
 
-  // 호출 시점의 최신 값. approve·swap은 렌더 시점이 아니라 이 값을 읽는다.
+  // 호출 시점의 최신 값. approve·swap·wrap·unwrap은 렌더 시점이 아니라 이 값을 읽는다.
   const latest = {
     primaryState,
     chainId,
@@ -237,11 +254,11 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
 
   const execute = useCallback(
     async (
-      kind: SwapExecutionTxKind,
+      kind: TxKind,
       txChainId: SupportedChainId,
       txAccount: Address,
       send: () => Promise<Hash>,
-      // approve의 클릭 시점 보내는 토큰과 그 카드 잔액. swap이면 `null`이다.
+      // approve의 클릭 시점 보내는 토큰과 그 카드 잔액. approve가 아니면 `null`이다.
       approveSnapshot: { token: Address; balance: bigint | null } | null,
     ): Promise<void> => {
       const generation = generationRef.current + 1;
@@ -292,7 +309,7 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
       if (!isCurrent()) return;
 
       setExecution({
-        phase: kind === "approve" ? "approving" : "swapping",
+        phase: PENDING_PHASE_BY_KIND[kind],
         pendingTx: { kind, chainId: txChainId, hash },
         account: txAccount,
         result: null,
@@ -317,14 +334,15 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
       if (!isCurrent()) return;
 
       if (outcome.status !== "success") {
-        // revert·확인 실패·교체: 다시 읽기를 기다리지 않는다. swap 교체여도 금액은 비우지 않는다(F6 EC-11).
+        // revert·확인 실패·교체: 다시 읽기를 기다리지 않는다. swap·wrap·unwrap 교체여도 금액은 비우지 않는다(F6 EC-11, F7 EC-6).
         void invalidateCardBalances(txChainId, txAccount).catch(() => undefined);
         void invalidateTokenAllowance(queryClient, txChainId, txAccount).catch(() => undefined);
         finish({ kind, status: outcome.status, chainId: txChainId, hash: outcome.hash });
         return;
       }
 
-      if (kind === "swap") {
+      // swap·wrap·unwrap 성공(F5 DoD-19·20, F7 DoD-31~33).
+      if (kind !== "approve") {
         const now = latestRef.current;
         if (getSelectedChainId() === txChainId && now.account === txAccount) {
           now.clearAmountInput();
@@ -335,7 +353,7 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
         } catch {
           // 다시 읽기 실패는 결과에 드러내지 않는다.
         }
-        finish({ kind: "swap", status: "success", chainId: txChainId, hash: outcome.hash });
+        finish({ kind, status: "success", chainId: txChainId, hash: outcome.hash });
         return;
       }
 
@@ -419,27 +437,87 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const params = buildExactInputSingleParams({
-      chainId: txChainId,
-      tokenIn: inToken,
-      tokenOut: outToken,
-      fee: quoteState.quote.fee,
-      recipient: txAccount,
-      amountInRaw: amount,
-      amountOutMinimum: minimum,
-    });
+    const fee = quoteState.quote.fee;
 
     await execute(
       "swap",
       txChainId,
       txAccount,
-      () =>
-        writeContract(config, {
-          address: CONTRACTS_BY_CHAIN[txChainId].swapRouter02,
+      () => {
+        // deadline은 전송 직전 시각으로 정한다(DoD-17). 나머지 인자는 클릭 시점 값이다.
+        const request = buildSwapTransactionRequest({
+          chainId: txChainId,
+          tokenIn: inToken,
+          tokenOut: outToken,
+          fee,
+          account: txAccount,
+          amountInRaw: amount,
+          amountOutMinimum: minimum,
+          deadline: getSwapDeadline(Date.now()),
+        });
+        return writeContract(config, {
+          address: request.to,
           abi: swapRouter02Abi,
           functionName: "multicall",
-          // deadline은 전송 직전 시각으로 정한다(DoD-17).
-          args: buildSwapMulticallArgs({ deadline: getSwapDeadline(Date.now()), params }),
+          args: request.args,
+          // 보내는 토큰이 ETH가 아니면 `undefined`라 지갑 요청에 `value`가 없다(F7 DoD-10).
+          value: request.value,
+          chainId: txChainId,
+          account: txAccount,
+        });
+      },
+      null,
+    );
+  }, [config, execute]);
+
+  // ETH → WETH. 선택 체인 WETH에 `deposit()`, `value`는 클릭 시점 `amountInRaw`다(F7 DoD-21).
+  const wrap = useCallback(async (): Promise<void> => {
+    if (lockRef.current) return;
+    const snapshot = latestRef.current;
+    if (snapshot.primaryState !== "wrap-ready") return;
+    const { chainId: txChainId, account: txAccount, amountInRaw: amount } = snapshot;
+    if (!txAccount || amount === null) return;
+
+    const request = buildWrapRequest({ chainId: txChainId, amountInRaw: amount });
+
+    await execute(
+      "wrap",
+      txChainId,
+      txAccount,
+      () =>
+        writeContract(config, {
+          address: request.to,
+          abi: wethAbi,
+          functionName: request.functionName,
+          args: request.args,
+          value: request.value,
+          chainId: txChainId,
+          account: txAccount,
+        }),
+      null,
+    );
+  }, [config, execute]);
+
+  // WETH → ETH. 선택 체인 WETH에 `withdraw(클릭 시점 amountInRaw)`, `value` 없음이다(F7 DoD-22).
+  const unwrap = useCallback(async (): Promise<void> => {
+    if (lockRef.current) return;
+    const snapshot = latestRef.current;
+    if (snapshot.primaryState !== "unwrap-ready") return;
+    const { chainId: txChainId, account: txAccount, amountInRaw: amount } = snapshot;
+    if (!txAccount || amount === null) return;
+
+    const request = buildUnwrapRequest({ chainId: txChainId, amountInRaw: amount });
+
+    await execute(
+      "unwrap",
+      txChainId,
+      txAccount,
+      () =>
+        writeContract(config, {
+          address: request.to,
+          abi: wethAbi,
+          functionName: request.functionName,
+          args: request.args,
           chainId: txChainId,
           account: txAccount,
         }),
@@ -448,14 +526,14 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
   }, [config, execute]);
 
   const value = useMemo<SwapExecutionValue>(
-    () => ({ phase, pendingTx, result, approve, swap, dismissResult }),
-    [phase, pendingTx, result, approve, swap, dismissResult],
+    () => ({ phase, pendingTx, result, approve, swap, wrap, unwrap, dismissResult }),
+    [phase, pendingTx, result, approve, swap, wrap, unwrap, dismissResult],
   );
 
   return <SwapExecutionContext.Provider value={value}>{children}</SwapExecutionContext.Provider>;
 }
 
-// F5 스펙 §4.2 실행 상태와 F6 스펙 §4.1 결과.
+// F7 스펙 §4.2 실행 상태와 결과(F5 스펙 §4.2, F6 스펙 §4.1을 넓혔다).
 export function useSwapExecution(): SwapExecutionValue {
   const value = useContext(SwapExecutionContext);
   if (!value) throw new Error("useSwapExecution must be used within SwapExecutionProvider");

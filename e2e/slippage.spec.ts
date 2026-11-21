@@ -111,7 +111,7 @@ test.describe("슬리피지 — 사용자가 고른 허용치가 실제 견적�
       await enterAmountIn(page, DOD26_ETH_IN, DECIMALS_18);
 
       // given: 실제 견적이 성공해 견적 정보와 예상 수령량 정수가 표시된다
-      await expect(primaryButton(page)).toHaveAttribute("data-state", "quote-ready", {
+      await expect(primaryButton(page)).toHaveAttribute("data-state", "swap-ready", {
         timeout: QUOTE_SETTLE_TIMEOUT_MS,
       });
       await expect(quoteDetails(page)).toBeVisible();

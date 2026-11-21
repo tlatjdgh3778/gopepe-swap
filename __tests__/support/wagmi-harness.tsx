@@ -391,3 +391,74 @@ export function decodeSwapCalldata(data: Hex): DecodedSwapMulticall {
   });
   return { deadline, calls };
 }
+
+// --- T-7(F7) 추가: ETH가 낀 swap의 multicall 내부 호출 종류별 디코드, WETH calldata 디코드 ---
+// 기존 `STUB_SWAP_ROUTER02_ABI`·`decodeSwapCalldata`는 그대로 두고, 아래 테스트 쪽 ABI 리터럴로 새로 디코드한다(제품 config의 ABI를 쓰지 않는다).
+
+export const STUB_SWAP_ROUTER02_ETH_ABI = parseAbi([
+  "function multicall(uint256 deadline, bytes[] data) payable returns (bytes[] results)",
+  "function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)",
+  "function unwrapWETH9(uint256 amountMinimum, address recipient) payable",
+]);
+
+export const STUB_WETH_ABI = parseAbi([
+  "function deposit() payable",
+  "function withdraw(uint256 wad)",
+]);
+
+// multicall `data` 원소 하나를 디코드한 결과. 종류(`kind`)는 함수 이름이다.
+export type DecodedRouterCall =
+  | { kind: "exactInputSingle"; params: DecodedExactInputSingle }
+  | { kind: "unwrapWETH9"; amountMinimum: bigint; recipient: Address };
+
+export type DecodedRouterMulticall = { deadline: bigint; calls: DecodedRouterCall[] };
+
+// SwapRouter02 전송 calldata(`multicall(uint256,bytes[])`)와 안의 호출(`exactInputSingle`·`unwrapWETH9`)을 순서대로 디코드한다.
+// 바깥이 `multicall`이 아니거나 안의 호출이 두 종류가 아니면 throw한다.
+export function decodeRouterMulticall(data: Hex): DecodedRouterMulticall {
+  const outer = decodeFunctionData({ abi: STUB_SWAP_ROUTER02_ETH_ABI, data });
+  if (outer.functionName !== "multicall")
+    throw new Error(`multicall이 아니다: ${outer.functionName}`);
+  const [deadline, inner] = outer.args;
+  const calls = inner.map((callData): DecodedRouterCall => {
+    const decoded = decodeFunctionData({ abi: STUB_SWAP_ROUTER02_ETH_ABI, data: callData });
+    if (decoded.functionName === "exactInputSingle") {
+      const [params] = decoded.args;
+      return {
+        kind: "exactInputSingle",
+        params: {
+          tokenIn: getAddress(params.tokenIn),
+          tokenOut: getAddress(params.tokenOut),
+          fee: params.fee,
+          recipient: getAddress(params.recipient),
+          amountIn: params.amountIn,
+          amountOutMinimum: params.amountOutMinimum,
+          sqrtPriceLimitX96: params.sqrtPriceLimitX96,
+        },
+      };
+    }
+    if (decoded.functionName === "unwrapWETH9") {
+      const [amountMinimum, recipient] = decoded.args;
+      return { kind: "unwrapWETH9", amountMinimum, recipient: getAddress(recipient) };
+    }
+    throw new Error(
+      `multicall 안의 호출이 exactInputSingle·unwrapWETH9가 아니다: ${decoded.functionName}`,
+    );
+  });
+  return { deadline, calls };
+}
+
+export type DecodedWethCall =
+  | { functionName: "deposit" }
+  | { functionName: "withdraw"; wad: bigint };
+
+// WETH 전송 calldata(`deposit()`·`withdraw(uint256)`)를 디코드한다. 두 함수가 아니면 throw한다.
+export function decodeWethCalldata(data: Hex): DecodedWethCall {
+  const decoded = decodeFunctionData({ abi: STUB_WETH_ABI, data });
+  if (decoded.functionName === "deposit") return { functionName: "deposit" };
+  if (decoded.functionName === "withdraw") {
+    const [wad] = decoded.args;
+    return { functionName: "withdraw", wad };
+  }
+  throw new Error(`WETH deposit·withdraw가 아니다`);
+}

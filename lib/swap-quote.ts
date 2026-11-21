@@ -20,8 +20,8 @@ import {
 import { isSwapInputIdle } from "@/lib/swap-input-state";
 import { isNativeToken } from "@/lib/token-amount";
 
-// 스펙 §4.1 견적 상태.
-export type SwapQuoteStatus = "idle" | "loading" | "no-route" | "error" | "success";
+// 견적 상태(F3 스펙 §4.1, F7 스펙 §4.2). `wrap`은 ETH ↔ WETH의 1:1 전환이다.
+export type SwapQuoteStatus = "idle" | "loading" | "no-route" | "error" | "success" | "wrap";
 
 export type SwapQuote = {
   amountOut: bigint;
@@ -31,9 +31,11 @@ export type SwapQuote = {
 };
 
 // `quote`는 `status`가 `success`일 때만 `null`이 아니다.
+// `wrap`이면 `amountOut`(= `amountInRaw`)을 함께 둔다(F7 DoD-14).
 export type SwapQuoteState =
+  | { status: "idle" | "loading" | "no-route" | "error"; quote: null }
   | { status: "success"; quote: SwapQuote }
-  | { status: Exclude<SwapQuoteStatus, "success">; quote: null };
+  | { status: "wrap"; quote: null; amountOut: bigint };
 
 // ─── 견적할 토큰 주소 ───────────────────────────────────────────────
 
@@ -47,12 +49,15 @@ function isSameAddress(a: Address, b: Address): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
 
-function isWethToken(chainId: SupportedChainId, token: Pick<Token, "address">): boolean {
+/**
+ * 토큰이 선택 체인의 WETH이면 참이다(주소 대소문자 무관).
+ */
+export function isWethToken(chainId: SupportedChainId, token: Pick<Token, "address">): boolean {
   return isSameAddress(token.address, CONTRACTS_BY_CHAIN[chainId].weth);
 }
 
 /**
- * 두 토큰이 ETH와 선택 체인의 WETH이면(순서 무관) 참이다. 이 페어는 견적 없이 `no-route`다(EC-6).
+ * 두 토큰이 ETH와 선택 체인의 WETH이면(순서 무관) 참이다. 이 페어는 견적 없이 `wrap`이다(F7 DoD-14).
  */
 export function isEthWethPair({ chainId, tokenIn, tokenOut }: QuoteTokenPairParams): boolean {
   return (
@@ -139,9 +144,10 @@ export type SwapQuoteRequest = {
   zeroForOne: boolean;
 };
 
+// `wrap`의 `amountOut`은 `amountInRaw`다(ETH ↔ WETH 1:1).
 export type SwapQuotePlan =
   | { status: "idle" }
-  | { status: "no-route" }
+  | { status: "wrap"; amountOut: bigint }
   | { status: "quote"; request: SwapQuoteRequest };
 
 export type SwapQuotePlanParams = {
@@ -154,7 +160,7 @@ export type SwapQuotePlanParams = {
 
 /**
  * RPC 없이 정할 수 있는 견적 상태를 먼저 판정한다.
- * 토큰 미선택 또는 금액이 비었거나 0이면 `idle`, ETH ↔ WETH이면 `no-route`,
+ * 토큰 미선택 또는 금액이 비었거나 0이면 `idle`, ETH ↔ WETH이면 `amountOut`이 `amountInRaw`인 `wrap`(F7 DoD-14),
  * 그 밖에는 WETH로 치환한 주소와 방향으로 견적할 요청(`quote`)이다.
  */
 export function planSwapQuote({
@@ -171,7 +177,9 @@ export function planSwapQuote({
   ) {
     return { status: "idle" };
   }
-  if (isEthWethPair({ chainId, tokenIn, tokenOut })) return { status: "no-route" };
+  if (isEthWethPair({ chainId, tokenIn, tokenOut })) {
+    return { status: "wrap", amountOut: amountInRaw };
+  }
 
   const quoteTokens = resolveQuoteTokens({ chainId, tokenIn, tokenOut });
   return {

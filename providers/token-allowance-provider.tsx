@@ -9,6 +9,7 @@ import {
   useTokenAllowanceRead,
 } from "@/hooks/use-token-allowance-read";
 import { useWalletRestore } from "@/hooks/use-wallet-restore";
+import { isEthWethPair } from "@/lib/swap-quote";
 import { isNativeToken } from "@/lib/token-amount";
 
 import { useSelectedChain } from "./selected-chain-provider";
@@ -24,17 +25,21 @@ const TokenAllowanceContext = createContext<TokenAllowanceState | null>(null);
 
 /**
  * 연결 계정·선택 체인·보내는 토큰의 SwapRouter02 allowance 상태(스펙 §4.2)를 정한다.
- * 보내는 토큰이 없거나 ETH이거나, 선택 체인의 토큰이 아니거나, 연결 상태가 아니면(미연결·복원 중) `idle`이고 읽지 않는다.
+ * 보내는 토큰이 없거나 ETH이거나, 선택 체인의 토큰이 아니거나, 두 토큰이 ETH와 WETH이거나(F7 DoD-20),
+ * 연결 상태가 아니면(미연결·복원 중) `idle`이고 읽지 않는다.
  * 현재 키에 성공 값이 있으면 다시 읽는 중이거나 다시 읽기가 실패해도 `success`와 그 값이다.
  * 성공 값이 없으면 읽기 실패는 `error`, 그 밖에는 `loading`이다. 다른 키의 값을 대신 쓰지 않는다.
  */
 export function TokenAllowanceProvider({ children }: { children: ReactNode }) {
   const { selectedChainId } = useSelectedChain();
   const { address: account } = useWalletRestore();
-  const { tokenIn } = useSwapForm();
+  const { tokenIn, tokenOut } = useSwapForm();
 
   const token =
-    tokenIn && tokenIn.chainId === selectedChainId && !isNativeToken(tokenIn)
+    tokenIn &&
+    tokenIn.chainId === selectedChainId &&
+    !isNativeToken(tokenIn) &&
+    !(tokenOut && isEthWethPair({ chainId: selectedChainId, tokenIn, tokenOut }))
       ? tokenIn.address
       : undefined;
 

@@ -38,13 +38,16 @@ const SECOND_ACCOUNT: Address = "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC";
 
 // 연결된 지갑의 주 버튼 상태(F2·F3)
 const CONNECTED_STATES = [
+  "wrapping",
+  "unwrapping",
   "select-token",
   "enter-amount",
   "insufficient-balance",
   "quoting",
   "no-route",
   "quote-error",
-  "quote-ready",
+  "wrap-ready",
+  "unwrap-ready",
 ];
 
 beforeEach(() => {

@@ -4,12 +4,14 @@ import type { SupportedChainId } from "@/config/chains";
 
 // ─── 결과 타입 ─────────────────────────────────────────────────────
 
-export type TxKind = "approve" | "swap";
+// 트랜잭션 종류(F6 스펙 §4.1, F7 스펙 §4.2). `pendingTx.kind`·`TxResult.kind`·`tx-status[data-kind]`가 같은 값을 쓴다.
+export type TxKind = "approve" | "swap" | "wrap" | "unwrap";
 
-// `useSwapExecution().result`(스펙 §4.1). `balanceDropped`는 approve 성공 결과에만 있다.
+// `useSwapExecution().result`(F6 스펙 §4.1, F7 스펙 §4.2). `balanceDropped`는 approve 성공 결과에만 있고,
+// swap·wrap·unwrap 성공 결과에는 없다.
 export type TxResult = { kind: TxKind } & (
   | { status: "success"; chainId: SupportedChainId; hash: Hash; balanceDropped: boolean } // kind "approve"
-  | { status: "success"; chainId: SupportedChainId; hash: Hash } // kind "swap"
+  | { status: "success"; chainId: SupportedChainId; hash: Hash } // kind "swap"·"wrap"·"unwrap"
   | { status: "reverted" | "receipt-failed" | "replaced"; chainId: SupportedChainId; hash: Hash }
   | { status: "rejected" | "chain-switch-failed" | "send-failed" }
 );
