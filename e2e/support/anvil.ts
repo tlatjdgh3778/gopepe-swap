@@ -10,6 +10,7 @@ import {
   http,
   numberToHex,
   parseAbi,
+  zeroAddress,
 } from "viem";
 import { mainnet } from "viem/chains";
 
@@ -241,4 +242,70 @@ export async function readAccountCode(account: Address): Promise<Hex | undefined
 // 계정 코드를 `anvil_setCode`로 지운다(빈 코드 `0x`). snapshot을 잡은 뒤 준비 단계에서만 쓰고, revert로 되돌린다.
 export async function clearAccountCode(account: Address): Promise<void> {
   await anvilRpc("anvil_setCode", [account, "0x"]);
+}
+
+// Ethereum Uniswap V3 Factory 주소(리터럴). 풀 주소는 제품 config·함수를 거치지 않고 Factory `getPool`로 anvil에서 직접 찾는다.
+// 출처: Uniswap v3 Ethereum 배포 문서, v3-core `IUniswapV3Factory.getPool`.
+export const UNISWAP_V3_FACTORY_ADDRESS: Address = "0x1F98431c8aD98523631AE4a59f267346ea31F984";
+
+const uniswapV3FactoryAbi = parseAbi([
+  "function getPool(address tokenA, address tokenB, uint24 fee) view returns (address pool)",
+]);
+
+// 출처: Uniswap v3-core `IUniswapV3PoolState.slot0`.
+const uniswapV3PoolAbi = parseAbi([
+  "function slot0() view returns (uint160 sqrtPriceX96, int24 tick, uint16 observationIndex, uint16 observationCardinality, uint16 observationCardinalityNext, uint8 feeProtocol, bool unlocked)",
+]);
+
+export type DirectTierSlot0 =
+  | { status: "no-pool" }
+  | { status: "ok"; pool: Address; sqrtPriceX96: bigint };
+
+export type DirectTierSlot0s = Record<DirectQuoteFeeTier, DirectTierSlot0>;
+
+async function readEachTierSlot0With(
+  client: typeof anvilClient,
+  tokenA: Address,
+  tokenB: Address,
+): Promise<DirectTierSlot0s> {
+  const entries = await Promise.all(
+    DIRECT_QUOTE_FEE_TIERS.map(async (fee): Promise<[DirectQuoteFeeTier, DirectTierSlot0]> => {
+      const pool = await client.readContract({
+        address: UNISWAP_V3_FACTORY_ADDRESS,
+        abi: uniswapV3FactoryAbi,
+        functionName: "getPool",
+        args: [tokenA, tokenB, fee],
+      });
+      if (pool === zeroAddress) return [fee, { status: "no-pool" }];
+      const [sqrtPriceX96] = await client.readContract({
+        address: pool,
+        abi: uniswapV3PoolAbi,
+        functionName: "slot0",
+      });
+      return [fee, { status: "ok", pool, sqrtPriceX96 }];
+    }),
+  );
+  return Object.fromEntries(entries) as DirectTierSlot0s;
+}
+
+// 러너가 두 토큰의 수수료 티어별 풀을 Factory에서 찾고 그 풀의 `slot0`를 anvil에서 직접 읽는다(앱 요청과 분리, 판정의 기대값용).
+// 풀이 없는 티어는 `no-pool`이고, 그 밖의 실패(연결·시간 초과·revert)는 그대로 던진다.
+export async function readEachTierPoolSlot0Directly(
+  tokenA: Address,
+  tokenB: Address,
+): Promise<DirectTierSlot0s> {
+  return readEachTierSlot0With(anvilClient, tokenA, tokenB);
+}
+
+// 앱의 단가 aggregate3(토큰 1개 기준 티어별 견적 + 티어별 풀 `slot0`)가 프록시 상류 시간 제한(5초) 안에 끝나도록,
+// 같은 쌍의 티어별 견적과 풀 `slot0`를 미리 읽어 포크에 풀 상태를 올린다(F9 T-1 (9): cold ETH 단가 7.1초). 판정에는 쓰지 않는다.
+export async function warmUpUsdPricePath(
+  token: Address,
+  quoteToken: Address,
+  oneTokenRaw: bigint,
+): Promise<void> {
+  await Promise.all([
+    quoteEachTierWith(anvilQuoteWarmUpClient, token, quoteToken, oneTokenRaw),
+    readEachTierSlot0With(anvilQuoteWarmUpClient, token, quoteToken),
+  ]);
 }

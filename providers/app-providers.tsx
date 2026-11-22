@@ -14,6 +14,7 @@ import { SlippageProvider } from "./slippage-provider";
 import { SwapExecutionProvider } from "./swap-execution-provider";
 import { SwapFormProvider } from "./swap-form-provider";
 import { SwapQuoteProvider } from "./swap-quote-provider";
+import { SwapUsdPriceProvider } from "./swap-usd-price-provider";
 import { TokenAllowanceProvider } from "./token-allowance-provider";
 
 export type AppProvidersProps = {
@@ -31,11 +32,13 @@ function WalletRestoreBoundary({ children }: { children: ReactNode }) {
   return (
     <WalletRestoreSettledContext.Provider value={settled}>
       <SwapFormProvider>
-        <SwapQuoteProvider>
-          <TokenAllowanceProvider>
-            <SwapExecutionProvider>{children}</SwapExecutionProvider>
-          </TokenAllowanceProvider>
-        </SwapQuoteProvider>
+        <SwapUsdPriceProvider>
+          <SwapQuoteProvider>
+            <TokenAllowanceProvider>
+              <SwapExecutionProvider>{children}</SwapExecutionProvider>
+            </TokenAllowanceProvider>
+          </SwapQuoteProvider>
+        </SwapUsdPriceProvider>
       </SwapFormProvider>
     </WalletRestoreSettledContext.Provider>
   );

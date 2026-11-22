@@ -43,7 +43,10 @@ export type BalanceRpcKind =
   | "other"
   | "quote"
   | "allowance"
-  | "receipt";
+  | "receipt"
+  // T-8(F9) 추가: 첫 하위 호출이 QuoterV2 `quoteExactInputSingle`인 단가 aggregate3 `eth_call`.
+  // 견적 aggregate3(첫 하위 호출이 `slot0`)보다 먼저 판정하며, 기존 `failWhen`·`hold`·견적 규칙이 적용되지 않는다.
+  | "usd-price";
 
 export type BalanceRpcRequest = {
   // 받은 순서(0부터)
@@ -64,6 +67,8 @@ export type BalanceRpcRequest = {
   allowance?: AllowanceRpcCall;
   // T-7(F5) 추가: 영수증 계열(`kind: "receipt"`) 중 해시로 조회하는 요청의 해시. 그 밖에는 undefined
   txHash?: Hash;
+  // T-8(F9) 추가: 단가 요청(`kind: "usd-price"`)이면 디코드한 쌍들. 그 밖에는 undefined
+  usdPrice?: UsdPriceRpcCall;
 };
 
 export type BalanceQuery = {
@@ -140,6 +145,20 @@ export type BalanceRpcStub = {
     transaction: StubTransaction,
     fromBlock: bigint,
   ): void;
+
+  // --- T-8(F9) 추가: 단가 aggregate3 ---
+  // 단가 규칙을 바꾼다. 응답 시점의 규칙으로 응답한다. 기본은 `defaultUsdPriceRule`(모든 쌍·티어 성공).
+  // 견적 규칙(`setQuoteRule`)과 따로 둔다.
+  setUsdPriceRule(rule: QuoteRule): void;
+  // 현재 단가 규칙
+  usdPriceRule(): QuoteRule;
+  // 조건에 맞는 단가 요청을 JSON-RPC 오류(-32000, viem이 재시도하지 않는 코드)로 실패시킨다. null이면 해제한다.
+  failUsdPriceWhen(matcher: RequestMatcher | null): void;
+  // 조건에 맞는 단가 요청이 담긴 HTTP 요청에 HTTP 429(프록시 요청 한도 초과)로 응답한다. null이면 해제한다.
+  // 같은 HTTP 배치에 담긴 다른 항목도 함께 429를 받는다(HTTP 응답 단위).
+  respondUsdPriceHttp429When(matcher: RequestMatcher | null): void;
+  // 조건에 맞는 단가 요청의 응답을 `release()` 전까지 붙잡는다. 조건을 생략하면 모든 단가 요청이다.
+  holdUsdPrice(matcher?: RequestMatcher): HoldGate;
 };
 
 // 2^61 - 1 (소수). 토큰 주소마다 서로 다른 값이 나오도록 나머지를 쓴다.
@@ -508,6 +527,362 @@ function answerQuoteEntry(
   return FAILED_SUBCALL;
 }
 
+// ─── T-8(F9) 추가: 단가 aggregate3 스텁 ───────────────────────────────
+// 앱은 단가 요청 1회에 Multicall3 aggregate3 `eth_call` 하나로 쌍 여러 개를 묶어 보낸다. 쌍마다 QuoterV2
+// `quoteExactInputSingle` 4건(토큰 1개 견적)을 앞에, 네 티어 풀의 `slot0` 4건을 뒤에 둔다(F9 계획 §1).
+// 스텁은 첫 하위 호출이 `quoteExactInputSingle`인 aggregate3를 단가 요청(`usd-price`)으로 분류해 견적 요청
+// (첫 하위 호출이 `slot0`)과 구분하고, 단가 규칙(`QuoteRule` 형태, 견적 규칙과 별도 상태)으로 응답한다.
+// `slot0` 대상(풀 주소)은 묶인 쌍마다 테스트 쪽 CREATE2 계산 주소와 맞춰 쌍·티어를 정한다. 맞는 풀이 없으면 실패로 응답한다.
+// 아래 기대값 함수(현물가, 티어 선택, 단가)는 제품 함수를 쓰지 않는 테스트 쪽 계산이다.
+
+// 체인 네이티브 USDC·WETH 공식 주소(리터럴, 제품 config를 쓰지 않는다)
+export const STUB_USDC_BY_CHAIN: Record<SupportedChainId, Address> = {
+  [mainnet.id]: "0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48",
+  [base.id]: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+  [arbitrum.id]: "0xaf88d065e77c8cC2239327C5EDb3A432268e5831",
+};
+export const STUB_WETH_BY_CHAIN: Record<SupportedChainId, Address> = {
+  [mainnet.id]: "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2",
+  [base.id]: "0x4200000000000000000000000000000000000006",
+  [arbitrum.id]: "0x82aF49447D8a07e3bd95BD0d56f35241523fBab1",
+};
+// 네이티브 ETH 표기 주소(리터럴)
+export const STUB_ETH_ADDRESS: Address = "0xEeeeeEeeeEeEeeEeEeEeeEEEeeeeEeeeeeeeEEeE";
+
+// Uniswap V3 TickMath MIN_SQRT_RATIO + 1, MAX_SQRT_RATIO − 1(리터럴). `sqrtPriceLimitX96` 0 견적의 방향별 한계값이다.
+export const STUB_SQRT_PRICE_LIMIT_ZERO_FOR_ONE = 4_295_128_740n;
+export const STUB_SQRT_PRICE_LIMIT_ONE_FOR_ZERO =
+  1_461_446_703_485_210_103_287_273_052_203_988_822_378_723_970_341n;
+
+// 견적 후 가격이 방향별 한계값에 닿은 값(유동성 소진). 방향은 두 주소의 수치 순서로 정한다.
+export function stubExhaustedSqrtPriceX96After(tokenIn: Address, tokenOut: Address): bigint {
+  return BigInt(tokenIn) < BigInt(tokenOut)
+    ? STUB_SQRT_PRICE_LIMIT_ZERO_FOR_ONE
+    : STUB_SQRT_PRICE_LIMIT_ONE_FOR_ZERO;
+}
+
+// 단가 요청에 묶인 쌍 하나. `tokenIn` 1개(`amountIn`)를 `tokenOut`으로 견적한다.
+export type UsdPricePairCall = {
+  tokenIn: Address;
+  tokenOut: Address;
+  amountIn: bigint;
+  // 이 쌍의 `quoteExactInputSingle` 하위 호출(받은 순서)
+  quotes: QuoteSubcall[];
+  // 대상 주소가 이 쌍의 풀과 맞는 `slot0` 하위 호출(받은 순서)
+  slot0s: Slot0Subcall[];
+};
+
+export type UsdPriceRpcCall = {
+  // 묶인 쌍(첫 `quoteExactInputSingle`이 나온 순서)
+  pairs: UsdPricePairCall[];
+  // 어느 쌍의 풀과도 맞지 않은 `slot0` 하위 호출 수
+  unmatchedSlot0Count: number;
+  // aggregate3에 묶인 하위 호출 수
+  subcallCount: number;
+};
+
+// QuoterV2 `quoteExactInputSingle((address,address,uint256,uint24,uint160))` 셀렉터(소문자, `0x` 없음)
+const QUOTE_EXACT_INPUT_SINGLE_SELECTOR = "c6a5026a";
+
+type UsdPriceEntry =
+  | { type: "quote"; call: QuoteSubcall }
+  | { type: "slot0"; call: Slot0Subcall; pair: UsdPricePairCall | null }
+  | { type: "unknown" };
+
+// 첫 하위 호출이 QuoterV2 `quoteExactInputSingle`인 aggregate3면 하위 호출을 쌍별로 디코드한다. 아니면 undefined.
+function decodeUsdPriceAggregate3(
+  chainId: SupportedChainId,
+  data: Hex,
+): { call: UsdPriceRpcCall; entries: UsdPriceEntry[] } | undefined {
+  // QuoterV2 `quoteExactInputSingle` 셀렉터가 없는 calldata(잔액 aggregate3 등)는 디코드하지 않는다.
+  if (!data.toLowerCase().includes(QUOTE_EXACT_INPUT_SINGLE_SELECTOR)) return undefined;
+  let calls: readonly { target: Address; callData: Hex }[];
+  try {
+    const decoded = decodeFunctionData({ abi: multicall3Abi, data });
+    if (decoded.functionName !== "aggregate3") return undefined;
+    calls = decoded.args[0];
+  } catch {
+    return undefined;
+  }
+  if (calls.length === 0) return undefined;
+  if (!decodeQuoteSubcall(getAddress(calls[0].target), calls[0].callData)) return undefined;
+
+  const pairs: UsdPricePairCall[] = [];
+  const pairByKey = new Map<string, UsdPricePairCall>();
+  const decodedQuotes = calls.map(({ target, callData }) =>
+    decodeQuoteSubcall(getAddress(target), callData),
+  );
+  for (const quote of decodedQuotes) {
+    if (!quote) continue;
+    const key = `${quote.tokenIn.toLowerCase()}:${quote.tokenOut.toLowerCase()}:${quote.amountIn}`;
+    let pair = pairByKey.get(key);
+    if (!pair) {
+      pair = {
+        tokenIn: quote.tokenIn,
+        tokenOut: quote.tokenOut,
+        amountIn: quote.amountIn,
+        quotes: [],
+        slot0s: [],
+      };
+      pairByKey.set(key, pair);
+      pairs.push(pair);
+    }
+    pair.quotes.push(quote);
+  }
+
+  // 풀 주소(소문자) → 쌍·티어. 같은 풀을 쓰는 쌍이 여럿이면 먼저 나온 쌍이다.
+  const poolOwners = new Map<string, { pair: UsdPricePairCall; fee: StubFeeTier }>();
+  for (const pair of pairs) {
+    for (const fee of STUB_FEE_TIERS) {
+      const pool = stubPoolAddress(chainId, pair.tokenIn, pair.tokenOut, fee).toLowerCase();
+      if (!poolOwners.has(pool)) poolOwners.set(pool, { pair, fee });
+    }
+  }
+
+  let unmatchedSlot0Count = 0;
+  const entries = calls.map(({ target, callData }, index): UsdPriceEntry => {
+    const quote = decodedQuotes[index];
+    if (quote) return { type: "quote", call: quote };
+    if (isSlot0Call(callData)) {
+      const address = getAddress(target);
+      const owner = poolOwners.get(address.toLowerCase());
+      const slot0: Slot0Subcall = { target: address, fee: owner?.fee ?? null };
+      if (owner) owner.pair.slot0s.push(slot0);
+      else unmatchedSlot0Count += 1;
+      return { type: "slot0", call: slot0, pair: owner?.pair ?? null };
+    }
+    return { type: "unknown" };
+  });
+
+  return { call: { pairs, unmatchedSlot0Count, subcallCount: calls.length }, entries };
+}
+
+function answerUsdPriceEntry(
+  chainId: SupportedChainId,
+  entry: UsdPriceEntry,
+  rule: QuoteRule,
+): { success: boolean; returnData: Hex } {
+  if (entry.type === "quote") {
+    return answerQuoteEntry(chainId, entry, entry.call, rule);
+  }
+  if (entry.type === "slot0") {
+    if (!entry.pair) return FAILED_SUBCALL;
+    const { tokenIn, tokenOut, amountIn } = entry.pair;
+    return answerQuoteEntry(
+      chainId,
+      { type: "slot0", call: entry.call },
+      { target: entry.call.target, tokenIn, tokenOut, amountIn, fee: entry.call.fee ?? 0 },
+      rule,
+    );
+  }
+  return FAILED_SUBCALL;
+}
+
+// 기본 단가 규칙: 모든 쌍의 네 티어 견적과 slot0이 성공한다(기본 견적 규칙과 같은 응답 형태, 500 티어 수령량이 가장 많다).
+export const defaultUsdPriceRule: QuoteRule = defaultQuoteRule;
+
+// 모든 티어를 revert로 응답하는 견적 응답(경로 없음 표본용)
+export const stubRevertQuote = (): QuoteTierResponse => ({ status: "revert" });
+
+// 쌍 하나의 단가 규칙 덮어쓰기. `quote`는 `tokenIn → tokenOut` 방향의 견적에만, `slot0`은 두 토큰의 풀에만 적용된다.
+export type UsdPricePairRule = {
+  // 생략하면 모든 체인
+  chainId?: SupportedChainId;
+  tokenIn: Address;
+  tokenOut: Address;
+  quote?: (query: QuoteQuery) => QuoteTierResponse;
+  slot0?: (query: Slot0Query) => Slot0Response;
+};
+
+// 지정한 쌍만 덮어쓰고 나머지는 `fallback` 규칙을 쓰는 단가 규칙. 같은 쌍을 여럿 주면 앞의 것이 적용된다.
+export function usdPriceRuleWith(
+  pairs: readonly UsdPricePairRule[],
+  fallback: QuoteRule = defaultUsdPriceRule,
+): QuoteRule {
+  const chainMatches = (pair: UsdPricePairRule, chainId: SupportedChainId) =>
+    pair.chainId === undefined || pair.chainId === chainId;
+  return {
+    quote: (query) => {
+      const pair = pairs.find(
+        (candidate) =>
+          candidate.quote !== undefined &&
+          chainMatches(candidate, query.chainId) &&
+          sameAddress(candidate.tokenIn, query.tokenIn) &&
+          sameAddress(candidate.tokenOut, query.tokenOut),
+      );
+      return pair?.quote ? pair.quote(query) : fallback.quote(query);
+    },
+    slot0: (query) => {
+      const pair = pairs.find((candidate) => {
+        if (candidate.slot0 === undefined || !chainMatches(candidate, query.chainId)) return false;
+        const [token0, token1] = stubSortTokens(candidate.tokenIn, candidate.tokenOut);
+        return sameAddress(token0, query.token0) && sameAddress(token1, query.token1);
+      });
+      return pair?.slot0 ? pair.slot0(query) : fallback.slot0(query);
+    },
+  };
+}
+
+// 단가 유리수(토큰 raw 1단위당 기준 토큰 raw). 제품 `UsdPrice`와 같은 형태다.
+export type StubPrice = { numerator: bigint; denominator: bigint };
+
+const STUB_Q192 = 2n ** 192n;
+
+// slot0 현물가(테스트 쪽 계산): 기준 토큰 raw / 대상 토큰 raw.
+// slot0 가격은 token1/token0 = sqrtPriceX96² / 2^192 이므로, 대상 토큰이 token0이면 그대로, token1이면 역수다.
+export function stubSpotPrice(
+  token: Address,
+  quoteToken: Address,
+  sqrtPriceX96: bigint,
+): StubPrice {
+  const squared = sqrtPriceX96 * sqrtPriceX96;
+  return BigInt(token) < BigInt(quoteToken)
+    ? { numerator: squared, denominator: STUB_Q192 }
+    : { numerator: STUB_Q192, denominator: squared };
+}
+
+export function stubMultiplyPrices(a: StubPrice, b: StubPrice): StubPrice {
+  return { numerator: a.numerator * b.numerator, denominator: a.denominator * b.denominator };
+}
+
+// 두 유리수가 같은 값인지(교차곱)
+export function stubPricesEqual(a: StubPrice, b: StubPrice): boolean {
+  return a.numerator * b.denominator === b.numerator * a.denominator;
+}
+
+// USD micros(테스트 쪽 계산): amountRaw × numerator / denominator 버림
+export function stubUsdMicros(amountRaw: bigint, price: StubPrice): bigint {
+  return (amountRaw * price.numerator) / price.denominator;
+}
+
+// 규칙이 고를 티어(테스트 쪽 기대값): revert·수령량 0·유동성 소진 티어를 빼고 수령량이 가장 많은 티어, 같으면 수수료가 낮은 티어.
+export function stubSelectFeeTier(
+  rule: QuoteRule,
+  input: Omit<QuoteQuery, "fee">,
+): { fee: StubFeeTier; amountOut: bigint } | null {
+  const exhausted = stubExhaustedSqrtPriceX96After(input.tokenIn, input.tokenOut);
+  let best: { fee: StubFeeTier; amountOut: bigint } | null = null;
+  for (const fee of STUB_FEE_TIERS) {
+    const response = rule.quote({ ...input, fee });
+    if (response.status !== "ok" || response.amountOut <= 0n) continue;
+    if (response.sqrtPriceX96After === exhausted) continue;
+    if (best === null || response.amountOut > best.amountOut) {
+      best = { fee, amountOut: response.amountOut };
+    }
+  }
+  return best;
+}
+
+// 쌍 하나의 현물가(테스트 쪽 기대값). 고를 티어가 없으면 `none`, 고른 티어의 slot0이 성공이 아니면 `error`다.
+export type StubPairPrice =
+  | { status: "ok"; fee: StubFeeTier; price: StubPrice }
+  | { status: "none" }
+  | { status: "error"; fee: StubFeeTier };
+
+export function stubPairPrice(
+  rule: QuoteRule,
+  input: { chainId: SupportedChainId; token: Address; quoteToken: Address; amountIn: bigint },
+): StubPairPrice {
+  const selected = stubSelectFeeTier(rule, {
+    chainId: input.chainId,
+    tokenIn: input.token,
+    tokenOut: input.quoteToken,
+    amountIn: input.amountIn,
+  });
+  if (!selected) return { status: "none" };
+  const [token0, token1] = stubSortTokens(input.token, input.quoteToken);
+  const slot0 = rule.slot0({ chainId: input.chainId, fee: selected.fee, token0, token1 });
+  if (slot0.status !== "ok") return { status: "error", fee: selected.fee };
+  return {
+    status: "ok",
+    fee: selected.fee,
+    price: stubSpotPrice(input.token, input.quoteToken, slot0.sqrtPriceX96),
+  };
+}
+
+// 토큰 단가(테스트 쪽 기대값, F9 DoD-1·2·3·4, EC-15·16·17·26).
+// ETH는 같은 체인 WETH, 체인 네이티브 USDC는 정확히 1, USDC 직접 경로가 있으면 그 현물가, 없으면 WETH 경유 곱이다.
+// 고른 티어의 slot0이 실패한 구간이 있으면 `error`, 고를 티어가 없는 구간이 있으면 `no-price`다.
+export type StubExpectedUsdPrice =
+  | { status: "success"; price: StubPrice }
+  | { status: "no-price" }
+  | { status: "error" };
+
+export function expectedStubUsdPrice(
+  rule: QuoteRule,
+  input: { chainId: SupportedChainId; token: Address; decimals: number },
+): StubExpectedUsdPrice {
+  const { chainId } = input;
+  const usdc = STUB_USDC_BY_CHAIN[chainId];
+  const weth = STUB_WETH_BY_CHAIN[chainId];
+  const token = sameAddress(input.token, STUB_ETH_ADDRESS) ? weth : input.token;
+  const decimals = sameAddress(input.token, STUB_ETH_ADDRESS) ? 18 : input.decimals;
+  if (sameAddress(token, usdc))
+    return { status: "success", price: { numerator: 1n, denominator: 1n } };
+
+  const amountIn = 10n ** BigInt(decimals);
+  const direct = stubPairPrice(rule, { chainId, token, quoteToken: usdc, amountIn });
+  if (direct.status === "ok") return { status: "success", price: direct.price };
+  if (direct.status === "error") return { status: "error" };
+  if (sameAddress(token, weth)) return { status: "no-price" };
+
+  const toWeth = stubPairPrice(rule, { chainId, token, quoteToken: weth, amountIn });
+  const wethToUsdc = stubPairPrice(rule, {
+    chainId,
+    token: weth,
+    quoteToken: usdc,
+    amountIn: 10n ** 18n,
+  });
+  if (toWeth.status === "error" || wethToUsdc.status === "error") return { status: "error" };
+  if (toWeth.status === "none" || wethToUsdc.status === "none") return { status: "no-price" };
+  return { status: "success", price: stubMultiplyPrices(toWeth.price, wethToUsdc.price) };
+}
+
+// 단가 요청의 단계. 쌍 중 하나라도 기준 토큰이 그 체인 WETH면 WETH 경유(2차), 아니면 USDC 직접(1차)이다.
+export function usdPriceStage(request: BalanceRpcRequest): "direct" | "routed" | undefined {
+  if (request.kind !== "usd-price" || !request.usdPrice) return undefined;
+  const weth = STUB_WETH_BY_CHAIN[request.chainId];
+  return request.usdPrice.pairs.some((pair) => sameAddress(pair.tokenOut, weth))
+    ? "routed"
+    : "direct";
+}
+
+// 단가 요청의 대상 토큰. 1차는 모든 쌍의 `tokenIn`, 2차는 (토큰, WETH) 쌍의 토큰이다((WETH, USDC) 구간 쌍은 뺀다).
+export function usdPriceTargets(request: BalanceRpcRequest): Address[] {
+  const stage = usdPriceStage(request);
+  if (!stage) return [];
+  const weth = STUB_WETH_BY_CHAIN[request.chainId];
+  return request
+    .usdPrice!.pairs.filter((pair) => stage === "direct" || sameAddress(pair.tokenOut, weth))
+    .map((pair) => pair.tokenIn);
+}
+
+// 단가 요청 조건 모음
+export const matchUsdPrice = {
+  // 모든 단가 요청
+  any: ((request) => request.kind === "usd-price") as RequestMatcher,
+  // 단계(1차 USDC 직접, 2차 WETH 경유)가 맞는 단가 요청
+  stage:
+    (stage: "direct" | "routed"): RequestMatcher =>
+    (request) =>
+      usdPriceStage(request) === stage,
+  // 대상 토큰에 `token`이 있는 단가 요청. ETH는 WETH 주소로 넘긴다.
+  target:
+    (token: Address): RequestMatcher =>
+    (request) =>
+      usdPriceTargets(request).some((candidate) => sameAddress(candidate, token)),
+  // (`tokenIn`, `tokenOut`) 쌍을 담은 단가 요청. `tokenOut`을 생략하면 `tokenIn`만 본다.
+  pair:
+    (tokenIn: Address, tokenOut?: Address): RequestMatcher =>
+    (request) =>
+      request.kind === "usd-price" &&
+      (request.usdPrice?.pairs ?? []).some(
+        (pair) =>
+          sameAddress(pair.tokenIn, tokenIn) &&
+          (tokenOut === undefined || sameAddress(pair.tokenOut, tokenOut)),
+      ),
+};
+
 // ─── T-7(F5) 추가: allowance `eth_call` 스텁 ──────────────────────────
 // 앱은 allowance를 토큰 주소로 보내는 ERC-20 `allowance(owner, spender)` `eth_call` 1회로 읽는다(multicall 묶음 없음).
 // 스텁은 calldata를 디코드해 allowance 규칙(`AllowanceFn`)으로 응답한다. 기본 규칙은 0이다(사용자 확정).
@@ -773,7 +1148,8 @@ type JsonRpcItem = { jsonrpc?: string; id?: number | string; method: string; par
 type Gate = {
   // T-6(F3) 추가: 기존 `hold`는 잔액 쪽(`balance`), `holdQuote`는 견적 요청(`quote`)에만 적용된다.
   // T-7(F5) 추가: `holdAllowance`는 allowance 요청(`allowance`), `holdReceipt`는 영수증 계열(`receipt`)에만 적용된다.
-  scope: "balance" | "quote" | "allowance" | "receipt";
+  // T-8(F9) 추가: `holdUsdPrice`는 단가 요청(`usd-price`)에만 적용된다.
+  scope: "balance" | "quote" | "allowance" | "receipt" | "usd-price";
   matcher: RequestMatcher;
   released: boolean;
   held: number;
@@ -829,6 +1205,9 @@ function decodeAggregate3(
   }
 }
 
+// T-8(F9) 추가: `answer`가 HTTP 429 응답을 요청할 때 돌려주는 표지
+const HTTP_429 = Symbol("http-429");
+
 function abortReason(signal: AbortSignal | undefined): Promise<never> {
   return new Promise((_, reject) => {
     if (!signal) return;
@@ -861,6 +1240,10 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     transaction: StubTransaction;
     fromBlock: bigint;
   }[] = [];
+  // T-8(F9) 추가
+  let usdPriceRule: QuoteRule = defaultUsdPriceRule;
+  let usdPriceFailMatcher: RequestMatcher | null = null;
+  let usdPriceHttp429Matcher: RequestMatcher | null = null;
 
   function addGate(scope: Gate["scope"], matcher: RequestMatcher): HoldGate {
     let resolve!: () => void;
@@ -914,6 +1297,17 @@ export function installBalanceRpcStub(): BalanceRpcStub {
         if (allowance) {
           return { ...common, kind: "allowance", account: undefined, tokens: [], allowance };
         }
+      }
+      // T-8(F9) 추가: 첫 하위 호출이 QuoterV2 호출인 aggregate3는 단가 요청으로 따로 분류한다(견적 판정보다 먼저).
+      const usdPrice = data ? decodeUsdPriceAggregate3(chainId, data) : undefined;
+      if (usdPrice) {
+        return {
+          ...common,
+          kind: "usd-price",
+          account: undefined,
+          tokens: [],
+          usdPrice: usdPrice.call,
+        };
       }
       // T-6(F3) 추가: QuoterV2 하위 호출을 담은 aggregate3는 견적 요청으로 따로 분류한다.
       const quote = data ? decodeQuoteAggregate3(chainId, data) : undefined;
@@ -1106,6 +1500,17 @@ export function installBalanceRpcStub(): BalanceRpcStub {
           result: decoded.entries.map((entry) => answerQuoteEntry(chainId, entry, pair, rule)),
         });
       }
+      // T-8(F9) 추가
+      case "usd-price": {
+        const { data } = readCallObject(item.params);
+        const decoded = decodeUsdPriceAggregate3(chainId, data!)!;
+        const rule = usdPriceRule;
+        return encodeFunctionResult({
+          abi: multicall3Abi,
+          functionName: "aggregate3",
+          result: decoded.entries.map((entry) => answerUsdPriceEntry(chainId, entry, rule)),
+        });
+      }
     }
   }
 
@@ -1116,8 +1521,12 @@ export function installBalanceRpcStub(): BalanceRpcStub {
 
     // 견적 요청은 견적 쪽 붙잡기·실패 규칙만, 그 밖의 요청은 기존 규칙만 적용한다(T-6 F3).
     // T-7(F5) 추가: allowance 요청과 영수증 계열도 각자의 붙잡기·실패 규칙만 적용한다.
+    // T-8(F9) 추가: 단가 요청은 단가 쪽 붙잡기·실패·HTTP 429 규칙만 적용한다.
     const scope: Gate["scope"] =
-      request.kind === "quote" || request.kind === "allowance" || request.kind === "receipt"
+      request.kind === "quote" ||
+      request.kind === "allowance" ||
+      request.kind === "receipt" ||
+      request.kind === "usd-price"
         ? request.kind
         : "balance";
     const holding = gates.filter(
@@ -1133,6 +1542,10 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       }
     }
 
+    if (scope === "usd-price" && usdPriceHttp429Matcher?.(request)) {
+      request.status = "failed";
+      return HTTP_429;
+    }
     const activeFailMatcher =
       scope === "quote"
         ? quoteFailMatcher
@@ -1140,7 +1553,9 @@ export function installBalanceRpcStub(): BalanceRpcStub {
           ? allowanceFailMatcher
           : scope === "receipt"
             ? receiptFailMatcher
-            : failMatcher;
+            : scope === "usd-price"
+              ? usdPriceFailMatcher
+              : failMatcher;
     if (activeFailMatcher?.(request)) {
       request.status = "failed";
       return { jsonrpc: "2.0", id, error: { code: -32000, message: "stub: request failed" } };
@@ -1158,6 +1573,13 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     const body = JSON.parse(call.body) as JsonRpcItem | JsonRpcItem[];
     const items = Array.isArray(body) ? body : [body];
     const responses = await Promise.all(items.map((item) => answer(chainId, item, call.signal)));
+    // T-8(F9) 추가: 단가 요청에 HTTP 429 규칙이 맞으면 HTTP 응답 전체를 429로 돌려준다.
+    if (responses.some((response) => response === HTTP_429)) {
+      return new Response(JSON.stringify({ error: "stub: too many requests" }), {
+        status: 429,
+        headers: { "content-type": "application/json" },
+      });
+    }
     return new Response(JSON.stringify(Array.isArray(body) ? responses : responses[0]), {
       status: 200,
       headers: { "content-type": "application/json" },
@@ -1234,6 +1656,22 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     },
     addBlockTransaction(chainId, transaction, fromBlock) {
       blockTransactions.push({ chainId, transaction, fromBlock });
+    },
+    // T-8(F9) 추가
+    setUsdPriceRule(rule) {
+      usdPriceRule = rule;
+    },
+    usdPriceRule() {
+      return usdPriceRule;
+    },
+    failUsdPriceWhen(matcher) {
+      usdPriceFailMatcher = matcher;
+    },
+    respondUsdPriceHttp429When(matcher) {
+      usdPriceHttp429Matcher = matcher;
+    },
+    holdUsdPrice(matcher) {
+      return addGate("usd-price", matcher ?? (() => true));
     },
   };
 }

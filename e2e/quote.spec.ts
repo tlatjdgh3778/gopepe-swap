@@ -1,5 +1,12 @@
 import { type Page, type Request, expect, test } from "@playwright/test";
-import { type Address, type Hex, decodeFunctionData, formatUnits, parseAbi } from "viem";
+import {
+  type Address,
+  type Hex,
+  decodeFunctionData,
+  formatUnits,
+  parseAbi,
+  toFunctionSelector,
+} from "viem";
 import { mainnet } from "viem/chains";
 
 import { E2E_MOCK_ACCOUNT } from "../config/e2e-mock";
@@ -83,6 +90,22 @@ const multicall3Abi = parseAbi([
   "function aggregate3(Call3[] calls) payable returns (Result[] returnData)",
 ]);
 
+// 출처: Uniswap v3-periphery `IQuoterV2.quoteExactInputSingle`.
+const QUOTE_EXACT_INPUT_SINGLE_SELECTOR = toFunctionSelector(
+  "quoteExactInputSingle((address,address,uint256,uint24,uint160))",
+);
+
+// F9 단가 aggregate3(F9 스펙 §4.5): 첫 하위 호출이 QuoterV2 `quoteExactInputSingle`이다(쌍마다 견적 4건 → slot0 4건).
+// 견적 aggregate3는 첫 하위 호출이 풀 `slot0`이라 이 조건에 걸리지 않는다.
+function isUsdPriceAggregate3(subcalls: readonly { target: Address; callData: Hex }[]): boolean {
+  const first = subcalls[0];
+  return (
+    first !== undefined &&
+    sameAddress(first.target, QUOTER_V2_ADDRESS) &&
+    first.callData.slice(0, 10).toLowerCase() === QUOTE_EXACT_INPUT_SINGLE_SELECTOR
+  );
+}
+
 function sameAddress(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
 }
@@ -124,8 +147,9 @@ function parseJson(text: string | null): unknown {
   }
 }
 
-// JSON-RPC 항목 하나가 담은 QuoterV2 호출 수. 호출 대상이 QuoterV2이면 1,
+// JSON-RPC 항목 하나가 담은 견적용 QuoterV2 호출 수. 호출 대상이 QuoterV2이면 1,
 // aggregate3이면 하위 호출 중 대상이 QuoterV2인 수, 그 밖의 호출 데이터에 QuoterV2 주소가 있으면 1로 센다.
+// F9 단가 aggregate3는 견적 요청이 아니므로 세지 않는다(F9 스펙 §4.5).
 function countQuoterV2CallsInItem(item: unknown): number {
   if (typeof item !== "object" || item === null) return 0;
   const params = (item as { params?: unknown }).params;
@@ -139,6 +163,7 @@ function countQuoterV2CallsInItem(item: unknown): number {
   if (callData === null) return 0;
   try {
     const { args } = decodeFunctionData({ abi: multicall3Abi, data: callData as Hex });
+    if (isUsdPriceAggregate3(args[0])) return 0;
     return args[0].filter((subcall) => sameAddress(subcall.target, QUOTER_V2_ADDRESS)).length;
   } catch {
     return callData.toLowerCase().includes(QUOTER_V2_ADDRESS.slice(2).toLowerCase()) ? 1 : 0;

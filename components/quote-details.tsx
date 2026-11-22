@@ -2,6 +2,7 @@
 
 import type { ReactNode } from "react";
 
+import { InlineUsd } from "@/components/usd-value";
 import { useAmountOutMinimum } from "@/hooks/use-amount-out-minimum";
 import {
   type PriceImpactSeverity,
@@ -16,6 +17,7 @@ import { cn } from "@/lib/utils";
 import { useSlippage } from "@/providers/slippage-provider";
 import { useSwapForm } from "@/providers/swap-form-provider";
 import { useSwapQuote } from "@/providers/swap-quote-provider";
+import { useSwapUsdPrices } from "@/providers/swap-usd-price-provider";
 
 // 가격 영향 등급별 색(스펙 §1.1). `text-primary`는 `--accent`다.
 const PRICE_IMPACT_SEVERITY_CLASS: Record<PriceImpactSeverity, string> = {
@@ -70,6 +72,8 @@ export function QuoteDetails() {
   const { status, quote } = useSwapQuote();
   const amountOutMinimum = useAmountOutMinimum();
   const { slippageBps } = useSlippage();
+  // 예상·최소 수령량 USD는 받는 칸 토큰 단가로 계산한다(F9 DoD-21, DoD-22).
+  const { out: tokenOutUsdPrice } = useSwapUsdPrices();
 
   if (status !== "loading" && status !== "success") return null;
   if (tokenIn === null || tokenOut === null) return null;
@@ -107,7 +111,14 @@ export function QuoteDetails() {
             data-amount-out-raw={quote ? quote.amountOut.toString() : undefined}
           >
             {quote ? (
-              `${formatTokenAmount(quote.amountOut, tokenOut.decimals)} ${tokenOut.symbol}`
+              <>
+                {`${formatTokenAmount(quote.amountOut, tokenOut.decimals)} ${tokenOut.symbol}`}
+                <InlineUsd
+                  testId="quote-amount-out-usd"
+                  amountRaw={quote.amountOut}
+                  price={tokenOutUsdPrice}
+                />
+              </>
             ) : (
               <QuoteSkeleton className="w-28" />
             )}
@@ -120,7 +131,14 @@ export function QuoteDetails() {
             }
           >
             {amountOutMinimum !== null ? (
-              `${formatTokenAmount(amountOutMinimum, tokenOut.decimals)} ${tokenOut.symbol}`
+              <>
+                {`${formatTokenAmount(amountOutMinimum, tokenOut.decimals)} ${tokenOut.symbol}`}
+                <InlineUsd
+                  testId="quote-amount-out-minimum-usd"
+                  amountRaw={amountOutMinimum}
+                  price={tokenOutUsdPrice}
+                />
+              </>
             ) : (
               <QuoteSkeleton className="w-28" />
             )}

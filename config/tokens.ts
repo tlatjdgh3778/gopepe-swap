@@ -44,6 +44,14 @@ const PINNED_STABLECOIN_ADDRESSES: Record<
   },
 };
 
+// 체인 네이티브 USDC 주소. 달러 환산의 기준 토큰이다(F9 스펙 §4.3).
+// USDC.e·USDbC 같은 브리지 USDC는 여기에 넣지 않는다(F9 EC-14).
+export const USDC_BY_CHAIN: Record<SupportedChainId, Address> = {
+  [mainnet.id]: PINNED_STABLECOIN_ADDRESSES[mainnet.id].usdc,
+  [base.id]: PINNED_STABLECOIN_ADDRESSES[base.id].usdc,
+  [arbitrum.id]: PINNED_STABLECOIN_ADDRESSES[arbitrum.id].usdc,
+};
+
 // allowance를 0으로 초기화한 뒤에만 0이 아닌 값으로 다시 승인할 수 있는 토큰의 체인별 주소 목록.
 // 0이 아닌 allowance 위에 0이 아닌 approve를 보내면 revert한다.
 // 출처: Ethereum USDT(TetherToken) `approve`의 `require(!((_value != 0) && (allowed[msg.sender][_spender] != 0)))`

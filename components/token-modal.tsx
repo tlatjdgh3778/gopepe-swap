@@ -2,11 +2,14 @@
 
 import { CheckIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
+import type { Address } from "viem";
 
 import { TokenLogo } from "@/components/token-logo";
+import { InlineUsd } from "@/components/usd-value";
 import { Dialog, DialogContent, DialogTitle } from "@/components/ui/dialog";
 import { PINNED_TOKENS_BY_CHAIN, TOKENS_BY_CHAIN, type Token } from "@/config/tokens";
-import { useTokenListBalances } from "@/hooks/use-token-list-balances";
+import { useTokenListBalancesRead } from "@/hooks/use-token-list-balances";
+import { useTokenUsdPrices } from "@/hooks/use-token-usd-price";
 import { formatTokenAmount } from "@/lib/token-amount";
 import { filterTokenList, sortTokenList } from "@/lib/token-list";
 import { type SwapSide, useSwapForm, useSwapFormActions } from "@/providers/swap-form-provider";
@@ -57,7 +60,20 @@ function TokenModalBody({
 }) {
   const { chainId, tokenIn, tokenOut } = useSwapForm();
   const { selectToken } = useSwapFormActions();
-  const balances = useTokenListBalances(open);
+  const { balances, readSucceeded } = useTokenListBalancesRead(open);
+  // 단가 일괄 조회 대상은 검색 결과가 아니라 목록 전체에서 잔액이 0보다 큰 토큰(목록 순서)이다.
+  // 이번 열기의 잔액 읽기가 성공한 뒤에만 조회한다(F9 DoD-30, DoD-32, EC-21, EC-22).
+  const pricedTokens = useMemo(
+    () =>
+      TOKENS_BY_CHAIN[chainId]
+        .filter((token) => {
+          const balance = balances?.get(token.address);
+          return balance !== undefined && balance > 0n;
+        })
+        .map((token) => token.address),
+    [chainId, balances],
+  );
+  const usdPrices = useTokenUsdPrices(chainId, pricedTokens, readSucceeded);
   // 입력값은 바로 보이고, 목록 걸러내기에는 입력이 멈춘 뒤 반영한 검색어를 쓴다.
   const [query, setQuery] = useState("");
   const [appliedQuery, setAppliedQuery] = useState("");
@@ -124,6 +140,7 @@ function TokenModalBody({
             {visible.map((token) => {
               const selected = sameAddress(token, current);
               const balance = balances?.get(token.address);
+              const usdPrice = usdPrices.get(token.address.toLowerCase() as Address);
               return (
                 <li key={token.address}>
                   <button
@@ -147,6 +164,13 @@ function TokenModalBody({
                     {balance !== undefined && (
                       <span className="shrink-0 font-mono text-sm tabular-nums">
                         {formatTokenAmount(balance, token.decimals)}
+                        {usdPrice !== undefined && (
+                          <InlineUsd
+                            testId="token-option-usd"
+                            amountRaw={balance}
+                            price={usdPrice}
+                          />
+                        )}
                       </span>
                     )}
                     {selected && <CheckIcon aria-hidden className="size-4 shrink-0 text-primary" />}
