@@ -173,11 +173,20 @@ function rowValueText(row: HTMLElement): string {
   return (within(row).getByRole("definition").textContent ?? "").trim();
 }
 
-// 값 자리 텍스트를 공백으로 나눈 조각(수량, 심볼)
+// 값 자리 텍스트를 공백으로 나눈 조각(수량, 심볼).
+// F9 §4.5 회귀 갱신(T-14): F9 §4.4 USD 요소(`quote-amount-out-minimum-usd`·`usd-skeleton`)와 그 앞의 ` · ` 구분자는 뺀다.
 function rowValueParts(row: HTMLElement): string[] {
-  return rowValueText(row)
+  const value = within(row).getByRole("definition").cloneNode(true) as HTMLElement;
+  for (const element of value.querySelectorAll(
+    '[data-testid="quote-amount-out-minimum-usd"], [data-testid="usd-skeleton"]',
+  )) {
+    element.remove();
+  }
+  const parts = (value.textContent ?? "")
+    .trim()
     .split(/\s+/)
     .filter((part) => part !== "");
+  return parts.at(-1) === "·" ? parts.slice(0, -1) : parts;
 }
 
 function tokenModal(): HTMLElement | null {

@@ -56,6 +56,5 @@ bun run test:e2e   # Playwright E2E
 - EIP-7702 계정의 unwrap 실패 가능성: WETH를 ETH로 전환할 때 WETH 컨트랙트는 ETH를 2300 가스로 보낸다. 위임 코드의 `receive`가 그 안에 끝나지 않는 계정은 전환이 실패하고, 일반 실패 메시지로 보인다.
 - 네트워크 수수료를 표시하지 않고, ETH 가스 부족을 미리 판정하지 않는다.
 - 단일 홉 exactInput만 지원한다. 멀티홉 라우팅과 받을 금액 지정(exactOutput)은 없다.
-- 달러 환산을 표시하지 않는다.
 - WalletConnect와 모바일 지갑 직접 연결을 지원하지 않는다.
 - 토큰 목록에 없는 토큰을 주소로 추가할 수 없다.

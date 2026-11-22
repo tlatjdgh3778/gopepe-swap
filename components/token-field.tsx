@@ -6,6 +6,7 @@ import { useId, useState } from "react";
 import { QuoteSkeleton } from "@/components/quote-details";
 import { TokenLogo } from "@/components/token-logo";
 import { TokenModal } from "@/components/token-modal";
+import { InlineUsd, UsdValue } from "@/components/usd-value";
 import type { SupportedChainId } from "@/config/chains";
 import { useWalletRestore } from "@/hooks/use-wallet-restore";
 import { formatTokenAmount } from "@/lib/token-amount";
@@ -18,6 +19,7 @@ import {
   useSwapFormBalances,
 } from "@/providers/swap-form-provider";
 import { useSwapQuote } from "@/providers/swap-quote-provider";
+import { useSwapUsdPrices } from "@/providers/swap-usd-price-provider";
 
 const FIELD_LABELS: Record<SwapSide, string> = {
   in: "보내는 토큰",
@@ -31,11 +33,13 @@ const UNKNOWN_BALANCE = "—";
 export function TokenField({ side }: { side: SwapSide }) {
   const { selectedChainId } = useSelectedChain();
   const wallet = useWalletRestore();
-  const { tokenIn, tokenOut, amountIn } = useSwapForm();
+  const { tokenIn, tokenOut, amountIn, amountInRaw } = useSwapForm();
   const { setAmountInput, setMaxAmount } = useSwapFormActions();
   const balances = useSwapFormBalances();
   const quoteState = useSwapQuote();
   const quoteStatus = quoteState.status;
+  const usdPrices = useSwapUsdPrices();
+  const usdPrice = usdPrices[side];
 
   // 모달을 연 체인을 기억한다. 선택 체인이 바뀌면 닫힌 것으로 보고 상태도 비운다(EC-2).
   const [modalChainId, setModalChainId] = useState<SupportedChainId | null>(null);
@@ -56,6 +60,8 @@ export function TokenField({ side }: { side: SwapSide }) {
         ? quoteState.amountOut
         : null;
   const amountOutRaw = side === "out" && tokenOut !== null ? quotedAmountOut : null;
+  // 3행 USD 행의 금액. 보내는 칸은 `amountInRaw`, 받는 칸은 위 수령량이다(F9 DoD-16, DoD-17, DoD-18).
+  const usdAmountRaw = side === "in" ? (tokenIn !== null ? amountInRaw : null) : amountOutRaw;
 
   return (
     <div
@@ -80,6 +86,8 @@ export function TokenField({ side }: { side: SwapSide }) {
                   ? UNKNOWN_BALANCE
                   : formatTokenAmount(balanceRaw, token.decimals)}
               </span>
+              {/* 카드 잔액 USD는 `balance` 요소 바깥에 둔다(F9 DoD-19, EC-6, EC-7, EC-8). */}
+              <InlineUsd testId="balance-usd" amountRaw={balanceRaw} price={usdPrice} />
             </span>
             {side === "in" && (
               <button
@@ -159,6 +167,8 @@ export function TokenField({ side }: { side: SwapSide }) {
           <ChevronDownIcon aria-hidden className="size-4 shrink-0" />
         </button>
       </div>
+
+      <UsdValue side={side} amountRaw={usdAmountRaw} price={usdPrice} />
 
       <TokenModal
         side={side}

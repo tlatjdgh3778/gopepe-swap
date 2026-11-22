@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
-import type { Address } from "viem";
+import { type Address, type Hex, decodeFunctionData, multicall3Abi } from "viem";
 import { arbitrum, base, mainnet } from "viem/chains";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { CreateConnectorFn } from "wagmi";
@@ -84,6 +84,35 @@ const ETHEREUM = LITERALS[mainnet.id];
 
 // QuoterV2 `quoteExactInputSingle((address,address,uint256,uint24,uint160))` 셀렉터
 const QUOTE_EXACT_INPUT_SINGLE_SELECTOR = "c6a5026a";
+
+// F9 §4.5 회귀 갱신(T-14): fetch 본문의 모든 JSON-RPC 항목이 F9 단가 aggregate3 `eth_call`인지.
+// 단가 aggregate3는 첫 하위 호출이 QuoterV2 `quoteExactInputSingle`인 aggregate3다(스텁 분류 `usd-price`와 같은 기준).
+// 견적 aggregate3(첫 하위 호출이 `slot0`), aggregate3가 아닌 호출, 그 밖의 항목이 하나라도 있으면 false다.
+function isUsdPriceOnlyBody(body: string): boolean {
+  const parsed = JSON.parse(body) as JsonRpcBodyItem | JsonRpcBodyItem[];
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+  return items.length > 0 && items.every(isUsdPriceAggregate3Item);
+}
+
+function isUsdPriceAggregate3Item(item: JsonRpcBodyItem): boolean {
+  if (item.method !== "eth_call") return false;
+  const callObject = (item.params?.[0] ?? {}) as { data?: Hex; input?: Hex };
+  const data = callObject.data ?? callObject.input;
+  if (!data) return false;
+  try {
+    const decoded = decodeFunctionData({ abi: multicall3Abi, data });
+    if (decoded.functionName !== "aggregate3") return false;
+    const calls = decoded.args[0];
+    return (
+      calls.length > 0 &&
+      calls[0].callData.toLowerCase().startsWith(`0x${QUOTE_EXACT_INPUT_SINGLE_SELECTOR}`)
+    );
+  } catch {
+    return false;
+  }
+}
+
+type JsonRpcBodyItem = { method?: string; params?: unknown[] };
 
 const ONE_ETH = 10n ** 18n;
 const ONE_USDC = 10n ** 6n;
@@ -324,9 +353,11 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
           ).toBe(false);
 
           // 선택 체인의 RPC 프록시 경로(리터럴)로만 간다.
+          // F9 §4.5 회귀 갱신: 모든 항목이 단가 aggregate3(첫 하위 호출이 QuoterV2)인 fetch만 견적 요청이 아니라서 뺀다.
           const quoteFetches = rpc.fetchStub
             .calls()
-            .filter((call) => call.body.toLowerCase().includes(QUOTE_EXACT_INPUT_SINGLE_SELECTOR));
+            .filter((call) => call.body.toLowerCase().includes(QUOTE_EXACT_INPUT_SINGLE_SELECTOR))
+            .filter((call) => !isUsdPriceOnlyBody(call.body));
           expect(quoteFetches.length, label).toBeGreaterThan(0);
           for (const call of quoteFetches) {
             expect(call.url.endsWith(`/api/rpc/${chainId}`), `${label} ${call.url}`).toBe(true);
