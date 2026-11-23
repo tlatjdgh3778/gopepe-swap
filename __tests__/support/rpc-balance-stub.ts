@@ -14,7 +14,9 @@ import {
   numberToHex,
   parseAbi,
   parseAbiParameters,
+  parseTransaction,
   toHex,
+  type TransactionSerialized,
 } from "viem";
 import { arbitrum, base, mainnet } from "viem/chains";
 
@@ -46,7 +48,14 @@ export type BalanceRpcKind =
   | "receipt"
   // T-8(F9) 추가: 첫 하위 호출이 QuoterV2 `quoteExactInputSingle`인 단가 aggregate3 `eth_call`.
   // 견적 aggregate3(첫 하위 호출이 `slot0`)보다 먼저 판정하며, 기존 `failWhen`·`hold`·견적 규칙이 적용되지 않는다.
-  | "usd-price";
+  | "usd-price"
+  // T-8(F10) 추가: 아래 "T-8(F10) 추가" 절을 본다. 세 분류 모두 기존 `failWhen`·`hold`와 다른 분류의 규칙이 적용되지 않는다.
+  // `eth_estimateGas`
+  | "estimate-gas"
+  // `eth_gasPrice`
+  | "gas-price"
+  // `getL1Fee(bytes)` 셀렉터의 `eth_call`(대상 무관, 대상은 `l1Fee.target`에 기록). 잔액·allowance·단가·견적·aggregate3 판정보다 먼저다.
+  | "l1-fee";
 
 export type BalanceRpcRequest = {
   // 받은 순서(0부터)
@@ -69,6 +78,14 @@ export type BalanceRpcRequest = {
   txHash?: Hash;
   // T-8(F9) 추가: 단가 요청(`kind: "usd-price"`)이면 디코드한 쌍들. 그 밖에는 undefined
   usdPrice?: UsdPriceRpcCall;
+  // T-8(F10) 추가: 받은 HTTP 요청의 URL(`/api/rpc/<체인>`)
+  url?: string;
+  // T-8(F10) 추가: 추정 요청(`kind: "estimate-gas"`)이면 디코드한 params. 그 밖에는 undefined
+  estimateGas?: EstimateGasRpcCall;
+  // T-8(F10) 추가: L1 수수료 요청(`kind: "l1-fee"`)이면 디코드한 호출. 그 밖에는 undefined
+  l1Fee?: L1FeeRpcCall;
+  // T-8(F10) 추가: 수수료 3분류가 성공으로 응답한 값(gas, gasPrice, L1 수수료 wei). 실패·대기 중이면 undefined
+  feeResult?: bigint;
 };
 
 export type BalanceQuery = {
@@ -159,6 +176,22 @@ export type BalanceRpcStub = {
   respondUsdPriceHttp429When(matcher: RequestMatcher | null): void;
   // 조건에 맞는 단가 요청의 응답을 `release()` 전까지 붙잡는다. 조건을 생략하면 모든 단가 요청이다.
   holdUsdPrice(matcher?: RequestMatcher): HoldGate;
+
+  // --- T-8(F10) 추가: 수수료 3분류(`estimate-gas`·`gas-price`·`l1-fee`) ---
+  // 수수료 규칙을 바꾼다. 응답 시점의 규칙으로 응답한다. 기본은 `defaultNetworkFeeRule`(리터럴 상수로 성공).
+  setNetworkFeeRule(rule: NetworkFeeRule): void;
+  // 현재 수수료 규칙
+  networkFeeRule(): NetworkFeeRule;
+  // 조건에 맞는 요청을 `failure`(기본 `rpc-error`)로 실패시킨다. null이면 해제한다. 붙잡기를 푼 뒤에 판정한다.
+  // `rpc-error`는 JSON-RPC 오류(-32000, viem이 재시도하지 않는 코드), `revert`는 code 3·data `0x`,
+  // `http-429`는 HTTP 429 응답이다(같은 HTTP 배치의 다른 항목도 함께 429를 받는다).
+  failEstimateGasWhen(matcher: RequestMatcher | null, failure?: NetworkFeeFailure): void;
+  failGasPriceWhen(matcher: RequestMatcher | null, failure?: NetworkFeeFailure): void;
+  failL1FeeWhen(matcher: RequestMatcher | null, failure?: NetworkFeeFailure): void;
+  // 조건에 맞는 요청의 응답을 `release()` 전까지 붙잡는다. 조건을 생략하면 그 분류의 모든 요청이다.
+  holdEstimateGas(matcher?: RequestMatcher): HoldGate;
+  holdGasPrice(matcher?: RequestMatcher): HoldGate;
+  holdL1Fee(matcher?: RequestMatcher): HoldGate;
 };
 
 // 2^61 - 1 (소수). 토큰 주소마다 서로 다른 값이 나오도록 나머지를 쓴다.
@@ -1143,13 +1176,384 @@ function rpcTransaction(
   };
 }
 
+// ─── T-8(F10) 추가: 수수료 3분류 스텁 ─────────────────────────────────
+// 앱(F10)은 선택 체인 RPC 프록시로 수수료 요청을 HTTP 요청 1건에 JSON-RPC 1건씩 보낸다(재시도·multicall 묶음 없음).
+// - `eth_estimateGas`(`estimate-gas`): params `{ from, to, data, value? }`. 스텁은 params를 기록하고 `to`·`data`·`value`를
+//   테스트 쪽 ABI 리터럴로 디코드해(approve·swap·wrap·unwrap) 수수료 규칙(`NetworkFeeRule.estimateGas`)으로 응답한다.
+// - `eth_gasPrice`(`gas-price`): 수수료 규칙(`NetworkFeeRule.gasPrice`)으로 응답한다.
+// - GasPriceOracle `getL1Fee(bytes)` `eth_call`(`l1-fee`): bytes 인자(서명 없는 EIP-1559 직렬화 트랜잭션)를 기록·디코드해
+//   수수료 규칙(`NetworkFeeRule.l1Fee`)으로 uint256을 응답한다. 셀렉터로 분류하고 대상 주소는 `l1Fee.target`에 기록한다.
+// 기본 응답은 아래 리터럴 상수다. revert는 code 3·data `0x`, 실패는 JSON-RPC 오류(-32000)·HTTP 429로 준다.
+// 기존 분류(잔액·견적·allowance·영수증·단가)의 규칙·붙잡기·실패는 이 세 분류에 적용되지 않고, 이 세 분류의 규칙도 다른 분류에 적용되지 않는다.
+
+export type NetworkFeeScope = "estimate-gas" | "gas-price" | "l1-fee";
+export const NETWORK_FEE_KINDS: readonly NetworkFeeScope[] = [
+  "estimate-gas",
+  "gas-price",
+  "l1-fee",
+];
+
+function isNetworkFeeKind(kind: string): kind is NetworkFeeScope {
+  return (NETWORK_FEE_KINDS as readonly string[]).includes(kind);
+}
+
+// `rpc-error`: JSON-RPC 오류(-32000, viem이 재시도하지 않는 코드), `revert`: code 3·data `0x`, `http-429`: HTTP 429 응답
+export type NetworkFeeFailure = "rpc-error" | "revert" | "http-429";
+
+// GasPriceOracle predeploy(OP Stack, 리터럴)
+export const STUB_GAS_PRICE_ORACLE: Address = "0x420000000000000000000000000000000000000F";
+// `getL1Fee(bytes)` 셀렉터
+export const STUB_GET_L1_FEE_SELECTOR: Hex = "0x49948e0e";
+// Uniswap swap-router-contracts `Constants.ADDRESS_THIS`(리터럴)
+export const STUB_ADDRESS_THIS: Address = "0x0000000000000000000000000000000000000002";
+
+// 테스트 쪽 ABI 리터럴(제품 config·ABI를 쓰지 않는다)
+const stubGasPriceOracleAbi = parseAbi(["function getL1Fee(bytes _data) view returns (uint256)"]);
+const stubFeeRouterAbi = parseAbi([
+  "function multicall(uint256 deadline, bytes[] data) payable returns (bytes[] results)",
+  "function exactInputSingle((address tokenIn, address tokenOut, uint24 fee, address recipient, uint256 amountIn, uint256 amountOutMinimum, uint160 sqrtPriceLimitX96) params) payable returns (uint256 amountOut)",
+  "function unwrapWETH9(uint256 amountMinimum, address recipient) payable",
+]);
+const stubFeeWethAbi = parseAbi(["function deposit() payable", "function withdraw(uint256 wad)"]);
+
+export type NetworkFeeTxKind = "approve" | "swap" | "wrap" | "unwrap" | "unknown";
+
+// 추정 대상 트랜잭션을 테스트 쪽 ABI로 디코드한 결과.
+// - approve: 대상이 토큰인 ERC-20 `approve(spender, amount)`
+// - swap: `multicall(deadline, data)` 안의 첫 `exactInputSingle`(토큰은 calldata 그대로, ETH는 WETH)과 뒤따르는 `unwrapWETH9`
+// - wrap: WETH `deposit()`(금액은 `value`), unwrap: WETH `withdraw(wad)`
+export type DecodedNetworkFeeTx =
+  | { kind: "approve"; token: Address; spender: Address; amount: bigint }
+  | {
+      kind: "swap";
+      router: Address;
+      deadline: bigint;
+      // `multicall`의 하위 호출 bytes(받은 그대로)
+      calls: readonly Hex[];
+      tokenIn: Address;
+      tokenOut: Address;
+      fee: number;
+      recipient: Address;
+      amountIn: bigint;
+      amountOutMinimum: bigint;
+      unwrap: { amountMinimum: bigint; recipient: Address } | null;
+    }
+  | { kind: "wrap"; weth: Address; amount: bigint }
+  | { kind: "unwrap"; weth: Address; amount: bigint }
+  | { kind: "unknown" };
+
+export type NetworkFeeTxFields = {
+  to: Address | undefined;
+  data: Hex | undefined;
+  value: bigint | undefined;
+};
+
+// `eth_estimateGas` params를 디코드한 값
+export type EstimateGasRpcCall = NetworkFeeTxFields & {
+  from: Address | undefined;
+  tx: DecodedNetworkFeeTx;
+};
+
+// `getL1Fee` bytes 인자를 직렬화 트랜잭션으로 파싱한 값. `value`·`data`는 0·`0x`이면 undefined다(viem `parseTransaction`).
+export type L1FeeTx = NetworkFeeTxFields & {
+  chainId: number | undefined;
+  decoded: DecodedNetworkFeeTx;
+};
+
+export type L1FeeRpcCall = {
+  // `eth_call` 대상 주소
+  target: Address;
+  // `getL1Fee`의 bytes 인자
+  txBytes: Hex;
+  // bytes를 트랜잭션으로 파싱한 값. 파싱하지 못하면 undefined
+  tx: L1FeeTx | undefined;
+};
+
+function tryDecode<T>(decode: () => T): T | undefined {
+  try {
+    return decode();
+  } catch {
+    return undefined;
+  }
+}
+
+// 추정 대상 트랜잭션(`to`·`data`·`value`)을 테스트 쪽 ABI 리터럴로 디코드한다.
+export function decodeStubNetworkFeeTx(tx: NetworkFeeTxFields): DecodedNetworkFeeTx {
+  const { to, data, value } = tx;
+  if (!to || !data || data === "0x") return { kind: "unknown" };
+
+  const approve = tryDecode(() => decodeFunctionData({ abi: erc20Abi, data }));
+  if (approve?.functionName === "approve") {
+    const [spender, amount] = approve.args;
+    return { kind: "approve", token: getAddress(to), spender: getAddress(spender), amount };
+  }
+
+  const weth = tryDecode(() => decodeFunctionData({ abi: stubFeeWethAbi, data }));
+  if (weth?.functionName === "deposit") {
+    return { kind: "wrap", weth: getAddress(to), amount: value ?? 0n };
+  }
+  if (weth?.functionName === "withdraw") {
+    return { kind: "unwrap", weth: getAddress(to), amount: weth.args[0] };
+  }
+
+  const outer = tryDecode(() => decodeFunctionData({ abi: stubFeeRouterAbi, data }));
+  if (outer?.functionName === "multicall") {
+    const [deadline, calls] = outer.args;
+    const inner = calls.map((callData) =>
+      tryDecode(() => decodeFunctionData({ abi: stubFeeRouterAbi, data: callData })),
+    );
+    const exact = inner.find((call) => call?.functionName === "exactInputSingle");
+    const unwrap = inner.find((call) => call?.functionName === "unwrapWETH9");
+    if (exact?.functionName === "exactInputSingle") {
+      const [params] = exact.args;
+      return {
+        kind: "swap",
+        router: getAddress(to),
+        deadline,
+        calls,
+        tokenIn: getAddress(params.tokenIn),
+        tokenOut: getAddress(params.tokenOut),
+        fee: params.fee,
+        recipient: getAddress(params.recipient),
+        amountIn: params.amountIn,
+        amountOutMinimum: params.amountOutMinimum,
+        unwrap:
+          unwrap?.functionName === "unwrapWETH9"
+            ? { amountMinimum: unwrap.args[0], recipient: getAddress(unwrap.args[1]) }
+            : null,
+      };
+    }
+  }
+  return { kind: "unknown" };
+}
+
+function readEstimateGasCall(params: unknown[] | undefined): EstimateGasRpcCall {
+  const first = (params?.[0] ?? {}) as {
+    from?: string;
+    to?: string;
+    data?: Hex;
+    input?: Hex;
+    value?: Hex;
+  };
+  const fields: NetworkFeeTxFields = {
+    to: first.to ? getAddress(first.to) : undefined,
+    data: first.data ?? first.input,
+    value: first.value !== undefined ? BigInt(first.value) : undefined,
+  };
+  return {
+    ...fields,
+    from: first.from ? getAddress(first.from) : undefined,
+    tx: decodeStubNetworkFeeTx(fields),
+  };
+}
+
+function decodeL1FeeCall(to: string, data: Hex): L1FeeRpcCall | undefined {
+  if (!data.toLowerCase().startsWith(STUB_GET_L1_FEE_SELECTOR)) return undefined;
+  const decoded = tryDecode(() => decodeFunctionData({ abi: stubGasPriceOracleAbi, data }));
+  if (!decoded) return undefined;
+  const txBytes = decoded.args[0];
+  const parsed = tryDecode(
+    () =>
+      parseTransaction(txBytes as TransactionSerialized) as {
+        chainId?: number;
+        to?: Address | null;
+        data?: Hex;
+        value?: bigint;
+      },
+  );
+  let tx: L1FeeTx | undefined;
+  if (parsed) {
+    const fields: NetworkFeeTxFields = {
+      to: parsed.to ? getAddress(parsed.to) : undefined,
+      data: parsed.data,
+      value: parsed.value,
+    };
+    tx = { ...fields, chainId: parsed.chainId, decoded: decodeStubNetworkFeeTx(fields) };
+  }
+  return { target: getAddress(to), txBytes, tx };
+}
+
+// 디코드한 트랜잭션의 비교용 요약. 없는 항목은 undefined다.
+// tokenIn: approve는 토큰, swap은 `exactInputSingle.tokenIn`. tokenOut: swap의 `exactInputSingle.tokenOut`.
+// amountIn: swap의 `amountIn`, wrap의 `value`, unwrap의 `wad`. approveAmount: approve의 금액. fee: swap의 fee tier.
+export function networkFeeTxSummary(tx: DecodedNetworkFeeTx): {
+  kind: NetworkFeeTxKind;
+  tokenIn?: Address;
+  tokenOut?: Address;
+  amountIn?: bigint;
+  approveAmount?: bigint;
+  fee?: number;
+} {
+  switch (tx.kind) {
+    case "approve":
+      return { kind: tx.kind, tokenIn: tx.token, approveAmount: tx.amount };
+    case "swap":
+      return {
+        kind: tx.kind,
+        tokenIn: tx.tokenIn,
+        tokenOut: tx.tokenOut,
+        amountIn: tx.amountIn,
+        fee: tx.fee,
+      };
+    case "wrap":
+    case "unwrap":
+      return { kind: tx.kind, amountIn: tx.amount };
+    case "unknown":
+      return { kind: tx.kind };
+  }
+}
+
+export type EstimateGasQuery = EstimateGasRpcCall & { chainId: SupportedChainId };
+export type EstimateGasResponse = { status: "ok"; gas: bigint } | { status: "revert" };
+// `index`: 이 요청 전에 같은 체인으로 받은 `eth_gasPrice` 요청 수(0부터, 실패 포함). 주기 다시 읽기마다 다른 값을 줄 때 쓴다.
+export type GasPriceQuery = { chainId: SupportedChainId; index: number };
+export type L1FeeQuery = { chainId: SupportedChainId; txBytes: Hex; tx: L1FeeTx | undefined };
+
+export type NetworkFeeRule = {
+  estimateGas(query: EstimateGasQuery): EstimateGasResponse;
+  gasPrice(query: GasPriceQuery): bigint;
+  l1Fee(query: L1FeeQuery): bigint;
+};
+
+// 기본 gas(kind별 리터럴)
+export const STUB_DEFAULT_GAS_BY_KIND: Readonly<Record<NetworkFeeTxKind, bigint>> = {
+  approve: 46_123n,
+  swap: 151_237n,
+  wrap: 27_941n,
+  unwrap: 36_017n,
+  unknown: 21_001n,
+};
+// 기본 가스 가격(체인별 리터럴, 체인마다 다르다)
+export const STUB_DEFAULT_GAS_PRICE_BY_CHAIN: Readonly<Record<SupportedChainId, bigint>> = {
+  [mainnet.id]: 2_000_000_011n,
+  [base.id]: 6_000_013n,
+  [arbitrum.id]: 10_000_019n,
+};
+// 기본 L1 수수료(wei, 리터럴)
+export const STUB_DEFAULT_L1_FEE = 1_234_567_891n;
+
+// 기본 수수료 규칙: 추정은 kind별 기본 gas, 가스 가격은 체인별 기본값, L1 수수료는 기본값으로 성공한다.
+export const defaultNetworkFeeRule: NetworkFeeRule = {
+  estimateGas: (query) => ({ status: "ok", gas: STUB_DEFAULT_GAS_BY_KIND[query.tx.kind] }),
+  gasPrice: (query) => STUB_DEFAULT_GAS_PRICE_BY_CHAIN[query.chainId],
+  l1Fee: () => STUB_DEFAULT_L1_FEE,
+};
+
+// 지정한 함수만 바꾸고 나머지는 `fallback` 규칙을 쓰는 수수료 규칙
+export function networkFeeRuleWith(
+  overrides: Partial<NetworkFeeRule>,
+  fallback: NetworkFeeRule = defaultNetworkFeeRule,
+): NetworkFeeRule {
+  return {
+    estimateGas: overrides.estimateGas ?? ((query) => fallback.estimateGas(query)),
+    gasPrice: overrides.gasPrice ?? ((query) => fallback.gasPrice(query)),
+    l1Fee: overrides.l1Fee ?? ((query) => fallback.l1Fee(query)),
+  };
+}
+
+// 추정을 revert로 응답(code 3, data `0x`)
+export const stubEstimateGasRevert = (): EstimateGasResponse => ({ status: "revert" });
+
+// 입력(체인·보낸 계정·kind·토큰·금액·approve 금액·fee tier)마다 다른 gas(테스트 쪽 계산). 같은 입력이면 같은 값이다.
+// kind별 기본 gas에 입력 해시의 나머지(0 이상 1_000_000 미만)를 더한다.
+export function stubGasVaryingByInput(query: EstimateGasQuery): bigint {
+  const summary = networkFeeTxSummary(query.tx);
+  const key = [
+    query.chainId,
+    query.from?.toLowerCase(),
+    summary.kind,
+    summary.tokenIn?.toLowerCase(),
+    summary.tokenOut?.toLowerCase(),
+    summary.amountIn,
+    summary.approveAmount,
+    summary.fee,
+  ].join("|");
+  return STUB_DEFAULT_GAS_BY_KIND[summary.kind] + (BigInt(keccak256(toHex(key))) % 1_000_000n);
+}
+
+// `stubGasVaryingByInput`으로 추정에 응답하는 수수료 규칙(가스 가격·L1 수수료는 `fallback`)
+export function networkFeeRuleVaryingByInput(
+  fallback: NetworkFeeRule = defaultNetworkFeeRule,
+): NetworkFeeRule {
+  return networkFeeRuleWith(
+    { estimateGas: (query) => ({ status: "ok", gas: stubGasVaryingByInput(query) }) },
+    fallback,
+  );
+}
+
+// 수수료 요청에서 비교할 트랜잭션 조건. 준 항목만 본다.
+export type NetworkFeeTxFilter = {
+  kind?: NetworkFeeTxKind;
+  // 대상 주소(`to`)
+  to?: Address;
+  // 보낸 계정(`from`, `estimate-gas`만)
+  from?: Address;
+  tokenIn?: Address;
+  tokenOut?: Address;
+  amountIn?: bigint;
+  approveAmount?: bigint;
+  fee?: number;
+};
+
+function networkFeeTxMatches(
+  filter: NetworkFeeTxFilter,
+  fields: NetworkFeeTxFields & { from?: Address },
+  tx: DecodedNetworkFeeTx,
+): boolean {
+  const summary = networkFeeTxSummary(tx);
+  return (
+    (filter.kind === undefined || summary.kind === filter.kind) &&
+    (filter.to === undefined || sameAddress(fields.to, filter.to)) &&
+    (filter.from === undefined || sameAddress(fields.from, filter.from)) &&
+    (filter.tokenIn === undefined || sameAddress(summary.tokenIn, filter.tokenIn)) &&
+    (filter.tokenOut === undefined || sameAddress(summary.tokenOut, filter.tokenOut)) &&
+    (filter.amountIn === undefined || summary.amountIn === filter.amountIn) &&
+    (filter.approveAmount === undefined || summary.approveAmount === filter.approveAmount) &&
+    (filter.fee === undefined || summary.fee === filter.fee)
+  );
+}
+
+// 수수료 요청 조건 모음
+export const matchNetworkFee = {
+  // 수수료 3분류의 모든 요청(분류 양성 대조에도 쓴다)
+  any: ((request) => isNetworkFeeKind(request.kind)) as RequestMatcher,
+  // 추정 요청. 조건을 주면 디코드한 트랜잭션이 조건에 맞는 요청만.
+  estimateGas:
+    (filter: NetworkFeeTxFilter = {}): RequestMatcher =>
+    (request) =>
+      request.kind === "estimate-gas" &&
+      request.estimateGas !== undefined &&
+      networkFeeTxMatches(filter, request.estimateGas, request.estimateGas.tx),
+  // 가스 가격 요청
+  gasPrice: ((request) => request.kind === "gas-price") as RequestMatcher,
+  // L1 수수료 요청. 조건을 주면 bytes 인자를 파싱한 트랜잭션이 조건에 맞는 요청만(`from` 조건은 보지 않는다).
+  l1Fee:
+    (filter: NetworkFeeTxFilter = {}): RequestMatcher =>
+    (request) => {
+      if (request.kind !== "l1-fee" || !request.l1Fee) return false;
+      if (Object.keys(filter).length === 0) return true;
+      const tx = request.l1Fee.tx;
+      if (!tx) return false;
+      return networkFeeTxMatches({ ...filter, from: undefined }, tx, tx.decoded);
+    },
+  // `matcher`에 맞는 첫 요청 하나에만 맞는 조건(예: 첫 요청만 실패·붙잡기). 상태를 가지므로 용도마다 새로 만든다.
+  first: (matcher: RequestMatcher): RequestMatcher => {
+    let firstSeq: number | undefined;
+    return (request) => {
+      if (firstSeq === undefined && matcher(request)) firstSeq = request.seq;
+      return request.seq === firstSeq;
+    };
+  },
+};
+
 type JsonRpcItem = { jsonrpc?: string; id?: number | string; method: string; params?: unknown[] };
 
 type Gate = {
   // T-6(F3) 추가: 기존 `hold`는 잔액 쪽(`balance`), `holdQuote`는 견적 요청(`quote`)에만 적용된다.
   // T-7(F5) 추가: `holdAllowance`는 allowance 요청(`allowance`), `holdReceipt`는 영수증 계열(`receipt`)에만 적용된다.
   // T-8(F9) 추가: `holdUsdPrice`는 단가 요청(`usd-price`)에만 적용된다.
-  scope: "balance" | "quote" | "allowance" | "receipt" | "usd-price";
+  // T-8(F10) 추가: `holdEstimateGas`·`holdGasPrice`·`holdL1Fee`는 각 수수료 분류에만 적용된다.
+  scope: "balance" | "quote" | "allowance" | "receipt" | "usd-price" | NetworkFeeScope;
   matcher: RequestMatcher;
   released: boolean;
   held: number;
@@ -1216,6 +1620,14 @@ function abortReason(signal: AbortSignal | undefined): Promise<never> {
   });
 }
 
+// T-8(F10) 추가: 추정 규칙이 revert를 요청할 때 `result`가 돌려주는 표지
+const ESTIMATE_REVERT = Symbol("estimate-revert");
+
+// T-8(F10) 추가: 노드의 revert 응답 형태(code 3, data `0x`)
+function revertResponse(id: number | string | null) {
+  return { jsonrpc: "2.0", id, error: { code: 3, message: "execution reverted", data: "0x" } };
+}
+
 // 전역 fetch를 바꾼다. 테스트 끝에 `vi.unstubAllGlobals()`로 되돌린다.
 export function installBalanceRpcStub(): BalanceRpcStub {
   const fetchStub = installRpcFetchStub();
@@ -1244,6 +1656,12 @@ export function installBalanceRpcStub(): BalanceRpcStub {
   let usdPriceRule: QuoteRule = defaultUsdPriceRule;
   let usdPriceFailMatcher: RequestMatcher | null = null;
   let usdPriceHttp429Matcher: RequestMatcher | null = null;
+  // T-8(F10) 추가
+  let networkFeeRule: NetworkFeeRule = defaultNetworkFeeRule;
+  const networkFeeFailures: Record<
+    NetworkFeeScope,
+    { matcher: RequestMatcher; failure: NetworkFeeFailure } | null
+  > = { "estimate-gas": null, "gas-price": null, "l1-fee": null };
 
   function addGate(scope: Gate["scope"], matcher: RequestMatcher): HoldGate {
     let resolve!: () => void;
@@ -1272,6 +1690,19 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       at: Date.now(),
       status: "pending" as const,
     };
+    // T-8(F10) 추가: 수수료 추정·가스 가격
+    if (item.method === "eth_estimateGas") {
+      return {
+        ...common,
+        kind: "estimate-gas",
+        account: undefined,
+        tokens: [],
+        estimateGas: readEstimateGasCall(item.params),
+      };
+    }
+    if (item.method === "eth_gasPrice") {
+      return { ...common, kind: "gas-price", account: undefined, tokens: [] };
+    }
     if (item.method === "eth_getBalance") {
       const account = item.params?.[0];
       return {
@@ -1283,6 +1714,11 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     }
     if (item.method === "eth_call") {
       const { to, data } = readCallObject(item.params);
+      // T-8(F10) 추가: `getL1Fee(bytes)` 호출은 다른 eth_call 판정보다 먼저 L1 수수료 요청으로 분류한다.
+      const l1Fee = to && data ? decodeL1FeeCall(to, data) : undefined;
+      if (l1Fee) {
+        return { ...common, kind: "l1-fee", account: undefined, tokens: [], l1Fee };
+      }
       if (to && data?.toLowerCase().startsWith(BALANCE_OF_SELECTOR)) {
         return {
           ...common,
@@ -1511,11 +1947,43 @@ export function installBalanceRpcStub(): BalanceRpcStub {
           result: decoded.entries.map((entry) => answerUsdPriceEntry(chainId, entry, rule)),
         });
       }
+      // T-8(F10) 추가
+      case "estimate-gas": {
+        const call = request.estimateGas!;
+        const response = networkFeeRule.estimateGas({ chainId, ...call });
+        if (response.status === "revert") return ESTIMATE_REVERT;
+        request.feeResult = response.gas;
+        return numberToHex(response.gas);
+      }
+      case "gas-price": {
+        const index = recorded.filter(
+          (candidate) =>
+            candidate.kind === "gas-price" &&
+            candidate.chainId === chainId &&
+            candidate.seq < request.seq,
+        ).length;
+        const gasPrice = networkFeeRule.gasPrice({ chainId, index });
+        request.feeResult = gasPrice;
+        return numberToHex(gasPrice);
+      }
+      case "l1-fee": {
+        const call = request.l1Fee!;
+        const l1Fee = networkFeeRule.l1Fee({ chainId, txBytes: call.txBytes, tx: call.tx });
+        request.feeResult = l1Fee;
+        return encodeAbiParameters(parseAbiParameters("uint256"), [l1Fee]);
+      }
     }
   }
 
-  async function answer(chainId: SupportedChainId, item: JsonRpcItem, signal?: AbortSignal) {
+  async function answer(
+    chainId: SupportedChainId,
+    item: JsonRpcItem,
+    signal?: AbortSignal,
+    url?: string,
+  ) {
     const request = classify(chainId, item);
+    // T-8(F10) 추가: 받은 HTTP 요청의 URL
+    if (url !== undefined) request.url = url;
     recorded.push(request);
     const id = item.id ?? null;
 
@@ -1526,7 +1994,8 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       request.kind === "quote" ||
       request.kind === "allowance" ||
       request.kind === "receipt" ||
-      request.kind === "usd-price"
+      request.kind === "usd-price" ||
+      isNetworkFeeKind(request.kind)
         ? request.kind
         : "balance";
     const holding = gates.filter(
@@ -1546,8 +2015,19 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       request.status = "failed";
       return HTTP_429;
     }
-    const activeFailMatcher =
-      scope === "quote"
+    // T-8(F10) 추가: 수수료 3분류는 각자의 실패 규칙만 적용한다.
+    if (isNetworkFeeKind(scope)) {
+      const rule = networkFeeFailures[scope];
+      if (rule?.matcher(request)) {
+        request.status = "failed";
+        if (rule.failure === "http-429") return HTTP_429;
+        if (rule.failure === "revert") return revertResponse(id);
+        return { jsonrpc: "2.0", id, error: { code: -32000, message: "stub: request failed" } };
+      }
+    }
+    const activeFailMatcher = isNetworkFeeKind(scope)
+      ? null
+      : scope === "quote"
         ? quoteFailMatcher
         : scope === "allowance"
           ? allowanceFailMatcher
@@ -1561,6 +2041,11 @@ export function installBalanceRpcStub(): BalanceRpcStub {
       return { jsonrpc: "2.0", id, error: { code: -32000, message: "stub: request failed" } };
     }
     const value = result(request, item);
+    // T-8(F10) 추가: 추정 규칙의 revert 응답
+    if (value === ESTIMATE_REVERT) {
+      request.status = "failed";
+      return revertResponse(id);
+    }
     if (value === undefined) {
       request.status = "failed";
       return { jsonrpc: "2.0", id, error: { code: -32601, message: "stub: method not found" } };
@@ -1572,7 +2057,9 @@ export function installBalanceRpcStub(): BalanceRpcStub {
   async function handle(chainId: SupportedChainId, call: StubCall): Promise<Response> {
     const body = JSON.parse(call.body) as JsonRpcItem | JsonRpcItem[];
     const items = Array.isArray(body) ? body : [body];
-    const responses = await Promise.all(items.map((item) => answer(chainId, item, call.signal)));
+    const responses = await Promise.all(
+      items.map((item) => answer(chainId, item, call.signal, call.url)),
+    );
     // T-8(F9) 추가: 단가 요청에 HTTP 429 규칙이 맞으면 HTTP 응답 전체를 429로 돌려준다.
     if (responses.some((response) => response === HTTP_429)) {
       return new Response(JSON.stringify({ error: "stub: too many requests" }), {
@@ -1672,6 +2159,31 @@ export function installBalanceRpcStub(): BalanceRpcStub {
     },
     holdUsdPrice(matcher) {
       return addGate("usd-price", matcher ?? (() => true));
+    },
+    // T-8(F10) 추가
+    setNetworkFeeRule(rule) {
+      networkFeeRule = rule;
+    },
+    networkFeeRule() {
+      return networkFeeRule;
+    },
+    failEstimateGasWhen(matcher, failure = "rpc-error") {
+      networkFeeFailures["estimate-gas"] = matcher ? { matcher, failure } : null;
+    },
+    failGasPriceWhen(matcher, failure = "rpc-error") {
+      networkFeeFailures["gas-price"] = matcher ? { matcher, failure } : null;
+    },
+    failL1FeeWhen(matcher, failure = "rpc-error") {
+      networkFeeFailures["l1-fee"] = matcher ? { matcher, failure } : null;
+    },
+    holdEstimateGas(matcher) {
+      return addGate("estimate-gas", matcher ?? (() => true));
+    },
+    holdGasPrice(matcher) {
+      return addGate("gas-price", matcher ?? (() => true));
+    },
+    holdL1Fee(matcher) {
+      return addGate("l1-fee", matcher ?? (() => true));
     },
   };
 }

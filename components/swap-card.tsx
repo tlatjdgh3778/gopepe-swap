@@ -1,3 +1,4 @@
+import { NetworkFee } from "@/components/network-fee";
 import { PrimaryButton } from "@/components/primary-button";
 import { QuoteDetails } from "@/components/quote-details";
 import { SlippageSettings } from "@/components/slippage-settings";
@@ -26,6 +27,7 @@ export function SwapCard() {
         <TokenField side="out" />
       </div>
       <QuoteDetails />
+      <NetworkFee />
       <PrimaryButton />
       <TxStatus />
     </section>

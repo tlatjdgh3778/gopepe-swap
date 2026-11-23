@@ -6,6 +6,7 @@ import {
   ContractFunctionRevertedError,
   ExecutionRevertedError,
   createPublicClient,
+  encodeFunctionData,
   erc20Abi,
   http,
   numberToHex,
@@ -308,4 +309,88 @@ export async function warmUpUsdPricePath(
     quoteEachTierWith(anvilQuoteWarmUpClient, token, quoteToken, oneTokenRaw),
     readEachTierSlot0With(anvilQuoteWarmUpClient, token, quoteToken),
   ]);
+}
+
+// ─── 네트워크 수수료 추정 경로 예열 (F10 T-14) ─────────────────────
+
+// 출처: Uniswap swap-router-contracts `IV3SwapRouter.exactInputSingle`(SwapRouter02, deadline 없음), WETH9 `deposit`.
+const swapRouter02ExactInputSingleAbi = parseAbi([
+  "struct ExactInputSingleParams { address tokenIn; address tokenOut; uint24 fee; address recipient; uint256 amountIn; uint256 amountOutMinimum; uint160 sqrtPriceLimitX96; }",
+  "function exactInputSingle(ExactInputSingleParams params) payable returns (uint256 amountOut)",
+]);
+const weth9DepositAbi = parseAbi(["function deposit() payable"]);
+
+export type EstimateWarmUpRequest = { to: Address; data: Hex; value?: bigint };
+
+// 앱의 `eth_estimateGas`가 프록시 상류 시간 제한(5초) 안에 끝나도록, 러너가 같은 계약을 거치는 추정을 anvil에 미리 보내
+// 포크에 계약 코드·저장소 슬롯을 올린다(F10 T-1 (6): cold 첫 추정 최대 약 2.9초, CI는 캐시 없음). 판정에는 쓰지 않는다.
+// revert(예: allowance가 없는 스왑의 `STF`)도 그 지점까지의 상태를 올리므로 무시하고, 그 밖의 실패(연결·시간 초과)는 던진다.
+export async function warmUpEstimateGas(
+  account: Address,
+  request: EstimateWarmUpRequest,
+): Promise<void> {
+  try {
+    await anvilQuoteWarmUpClient.estimateGas({
+      account,
+      to: request.to,
+      data: request.data,
+      value: request.value,
+    });
+  } catch (error) {
+    if (isRevert(error)) return;
+    throw error;
+  }
+}
+
+// ERC-20 `approve(spender, amount)` 추정 예열 요청.
+export function approveWarmUpRequest(
+  token: Address,
+  spender: Address,
+  amount: bigint,
+): EstimateWarmUpRequest {
+  return {
+    to: token,
+    data: encodeFunctionData({ abi: erc20Abi, functionName: "approve", args: [spender, amount] }),
+  };
+}
+
+// SwapRouter02 `exactInputSingle` 추정 예열 요청. ETH 입력이면 `tokenIn`을 WETH로 두고 `value`에 금액을 넣는다.
+// 최소 수령량은 0이다(예열은 같은 풀·라우터 상태를 올리는 것만 목적이다).
+export function exactInputSingleWarmUpRequest(params: {
+  router: Address;
+  tokenIn: Address;
+  tokenOut: Address;
+  fee: number;
+  recipient: Address;
+  amountIn: bigint;
+  value?: bigint;
+}): EstimateWarmUpRequest {
+  return {
+    to: params.router,
+    data: encodeFunctionData({
+      abi: swapRouter02ExactInputSingleAbi,
+      functionName: "exactInputSingle",
+      args: [
+        {
+          tokenIn: params.tokenIn,
+          tokenOut: params.tokenOut,
+          fee: params.fee,
+          recipient: params.recipient,
+          amountIn: params.amountIn,
+          amountOutMinimum: 0n,
+          sqrtPriceLimitX96: 0n,
+        },
+      ],
+    }),
+    value: params.value,
+  };
+}
+
+// WETH9 `deposit` + `value` 추정 예열 요청.
+export function wrapWarmUpRequest(weth: Address, amount: bigint): EstimateWarmUpRequest {
+  return {
+    to: weth,
+    data: encodeFunctionData({ abi: weth9DepositAbi, functionName: "deposit" }),
+    value: amount,
+  };
 }

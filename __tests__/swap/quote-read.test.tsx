@@ -21,6 +21,7 @@ import {
   defaultSlot0SqrtPriceX96,
   installBalanceRpcStub,
   match,
+  matchNetworkFee,
   matchQuote,
   sameAddress,
   shiftQuoteAmounts,
@@ -555,7 +556,16 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
             await vi.advanceTimersByTimeAsync(REFETCH_MS + 1);
           });
           await settlePendingWork();
-          expect(rpc.requests(match.since(seq, matchQuote.notBalance)), sample).toEqual([]);
+          // 스펙 F10 §4.5: F10 수수료 요청(eth_estimateGas·eth_gasPrice·getL1Fee)은 집계에서 뺀다.
+          expect(
+            rpc.requests(
+              match.since(
+                seq,
+                (request) => matchQuote.notBalance(request) && !matchNetworkFee.any(request),
+              ),
+            ),
+            sample,
+          ).toEqual([]);
           expect(result.current.quote.status, sample).toBe("wrap");
           vi.useRealTimers();
         }
@@ -593,7 +603,13 @@ describe("견적 조회 — 사용자가 고른 체인·토큰·금액으로 Uni
           await trigger();
           await waitUntil(() => expect(outAmountRaw(), label).toBe(raw));
           await settlePendingWork();
-          const counted = rpc.requests(match.since(seq, matchQuote.notBalance)).length;
+          // 스펙 F10 §4.5: F10 수수료 요청(eth_estimateGas·eth_gasPrice·getL1Fee)은 집계에서 뺀다.
+          const counted = rpc.requests(
+            match.since(
+              seq,
+              (request) => matchQuote.notBalance(request) && !matchNetworkFee.any(request),
+            ),
+          ).length;
           // 양성 대조: 견적 요청이 집계 대상에 잡힌다.
           expect(counted, label).toBeGreaterThanOrEqual(1);
           expect(counted, label).toBeLessThanOrEqual(2);

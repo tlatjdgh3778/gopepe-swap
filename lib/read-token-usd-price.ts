@@ -40,7 +40,7 @@ const NO_SQRT_PRICE_LIMIT = 0n;
 // 단가 요청 1회는 HTTP 요청 1건이다. viem http transport는 기본으로 429·5xx·네트워크 오류를 최대 3회 다시 보내므로
 // 요청마다 `retryCount: 0`을 강제한 사본을 쓴다(F9 EC-10, EC-23). multicall 묶음 설정도 끈다.
 // 사본의 `request`가 쓰이려면 클라이언트에 `readContract`·`call` 확장이 없어야 한다(wagmi `getClient()` 클라이언트는 없다).
-function withoutRetry(client: TokenBalanceClient): TokenBalanceClient {
+export function withoutRetry(client: TokenBalanceClient): TokenBalanceClient {
   const unbatched = withoutMulticallBatching(client);
   const baseRequest = unbatched.request;
   // `request`는 RPC 스키마별 제네릭 함수라 인자를 그대로 넘기는 래퍼의 타입을 좁히지 못한다.

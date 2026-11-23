@@ -174,7 +174,8 @@ function rowValueText(row: HTMLElement): string {
 }
 
 // 값 자리 텍스트를 공백으로 나눈 조각(수량, 심볼).
-// F9 §4.5 회귀 갱신(T-14): F9 §4.4 USD 요소(`quote-amount-out-minimum-usd`·`usd-skeleton`)와 그 앞의 ` · ` 구분자는 뺀다.
+// F9 §4.5 회귀 갱신(T-14): F9 §4.4 USD 요소(`quote-amount-out-minimum-usd`·`usd-skeleton`)는 뺀다.
+// F10 §4.5 회귀 갱신(T-13): USD 요소를 감싸던 괄호(` (`·`)`)가 남긴 끝 조각(`()` 하나 또는 `(`·`)` 두 개)만 뺀다.
 function rowValueParts(row: HTMLElement): string[] {
   const value = within(row).getByRole("definition").cloneNode(true) as HTMLElement;
   for (const element of value.querySelectorAll(
@@ -186,7 +187,9 @@ function rowValueParts(row: HTMLElement): string[] {
     .trim()
     .split(/\s+/)
     .filter((part) => part !== "");
-  return parts.at(-1) === "·" ? parts.slice(0, -1) : parts;
+  if (parts.at(-1) === "()") return parts.slice(0, -1);
+  if (parts.at(-2) === "(" && parts.at(-1) === ")") return parts.slice(0, -2);
+  return parts;
 }
 
 function tokenModal(): HTMLElement | null {
