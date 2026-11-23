@@ -16,6 +16,7 @@ import {
   installBalanceRpcStub,
   match,
   matchAllowance,
+  matchNetworkFee,
   matchQuote,
   sameAddress,
 } from "../support/rpc-balance-stub";
@@ -325,7 +326,16 @@ describe("ETH ↔ WETH — 사용자가 ETH와 WETH를 고르면 견적 요청 �
           });
           await settlePendingWork();
           expect(seq, label).toBeGreaterThanOrEqual(0);
-          expect(rpc.requests(match.since(seq, matchQuote.notBalance)), label).toEqual([]);
+          // 스펙 F10 §4.5: F10 수수료 요청(eth_estimateGas·eth_gasPrice·getL1Fee)은 집계에서 뺀다.
+          expect(
+            rpc.requests(
+              match.since(
+                seq,
+                (request) => matchQuote.notBalance(request) && !matchNetworkFee.any(request),
+              ),
+            ),
+            label,
+          ).toEqual([]);
           vi.useRealTimers();
         }
       },

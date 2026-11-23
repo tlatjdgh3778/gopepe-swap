@@ -9,6 +9,7 @@ import type { SupportedChainId } from "@/config/chains";
 import { type WagmiConfig, attachE2EControl, createWagmiConfig } from "@/config/wagmi";
 import { WalletRestoreSettledContext, useWalletRestoreTracker } from "@/hooks/use-wallet-restore";
 
+import { NetworkFeeProvider } from "./network-fee-provider";
 import { SelectedChainProvider } from "./selected-chain-provider";
 import { SlippageProvider } from "./slippage-provider";
 import { SwapExecutionProvider } from "./swap-execution-provider";
@@ -35,7 +36,9 @@ function WalletRestoreBoundary({ children }: { children: ReactNode }) {
         <SwapUsdPriceProvider>
           <SwapQuoteProvider>
             <TokenAllowanceProvider>
-              <SwapExecutionProvider>{children}</SwapExecutionProvider>
+              <SwapExecutionProvider>
+                <NetworkFeeProvider>{children}</NetworkFeeProvider>
+              </SwapExecutionProvider>
             </TokenAllowanceProvider>
           </SwapQuoteProvider>
         </SwapUsdPriceProvider>

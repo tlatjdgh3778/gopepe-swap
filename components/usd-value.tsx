@@ -85,7 +85,7 @@ export function UsdValue({
 }
 
 /**
- * 잔액·수령량 뒤에 `· $2,969.88`처럼 덧붙이는 USD(F9 스펙 §1.1).
+ * 잔액·수령량 뒤에 ` ($2,969.88)`처럼 괄호로 덧붙이는 USD(F9 스펙 §1.1, F10 스펙 §4.5 개정).
  * 금액이 0보다 크고 단가가 `success`일 때만 `testId` 요소와 `data-usd-micros`가 있다.
  * 단가 첫 조회 중이면 그 자리에 `usd-skeleton`을 보이고, 그 밖(금액 없음·0, 단가 없음·실패·`idle`)에는 렌더하지 않는다(EC-6, EC-7, EC-8).
  */
@@ -109,8 +109,9 @@ export function InlineUsd({
   if (price.status === "loading") {
     return (
       <span className={cn("font-mono text-muted-foreground tabular-nums", className)}>
-        {" · "}
+        {" ("}
         <UsdSkeleton />
+        {")"}
       </span>
     );
   }
@@ -119,10 +120,11 @@ export function InlineUsd({
   const usdMicros = toUsdMicros(amountRaw, price.price);
   return (
     <span className={cn("font-mono text-muted-foreground tabular-nums", className)}>
-      {" · "}
+      {" ("}
       <span data-testid={testId} data-usd-micros={usdMicros.toString()}>
         {formatUsd(usdMicros)}
       </span>
+      {")"}
     </span>
   );
 }
