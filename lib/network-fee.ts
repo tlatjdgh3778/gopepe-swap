@@ -29,7 +29,7 @@ export type NetworkFeeKind = "approve" | "swap" | "wrap" | "unwrap";
 export type NetworkFeeSeverity = "normal" | "warning" | "unknown";
 
 export type NetworkFeeState =
-  | { status: "idle" } // 미연결, 주 버튼이 approve-required·swap-ready·wrap-ready·unwrap-ready가 아님
+  | { status: "idle" } // 미연결, 주 버튼이 batch-ready·approve-required·swap-ready·wrap-ready·unwrap-ready가 아님
   | { status: "loading"; kind: NetworkFeeKind; ethShortage: boolean }
   | { status: "error"; kind: NetworkFeeKind; ethShortage: boolean }
   | {
@@ -44,7 +44,9 @@ export type NetworkFeeState =
 
 // ─── 주 버튼 상태 → kind ─────────────────────────────────────────────
 
+// `batch-ready`는 approve 수수료만 추정한다(batch-calls 스펙 §4.5, DoD-21·25).
 const KIND_BY_PRIMARY_BUTTON_STATE: Partial<Record<PrimaryButtonState, NetworkFeeKind>> = {
+  "batch-ready": "approve",
   "approve-required": "approve",
   "swap-ready": "swap",
   "wrap-ready": "wrap",
@@ -52,11 +54,25 @@ const KIND_BY_PRIMARY_BUTTON_STATE: Partial<Record<PrimaryButtonState, NetworkFe
 };
 
 /**
- * 주 버튼 상태의 수수료 kind(F10 DoD-12). `approve-required`·`swap-ready`·`wrap-ready`·`unwrap-ready` 밖
+ * 주 버튼 상태의 수수료 kind(F10 DoD-12, batch-calls 스펙 §4.5). `batch-ready`·`approve-required`는 `approve`다.
+ * `batch-ready`·`approve-required`·`swap-ready`·`wrap-ready`·`unwrap-ready` 밖
  * (복원 중, 미연결, 서명 대기·pending phase, 입력·견적·allowance 미완료 등)은 `null`(수수료 `idle`)이다.
  */
 export function getNetworkFeeKind(state: PrimaryButtonState): NetworkFeeKind | null {
   return KIND_BY_PRIMARY_BUTTON_STATE[state] ?? null;
+}
+
+// 수수료 행 안내 줄 종류. `swap-pending`은 `network-fee-swap-pending`, `batch`는 `network-fee-batch-note`다.
+export type NetworkFeeNote = "swap-pending" | "batch";
+
+/**
+ * 주 버튼 상태의 수수료 행 안내 줄(batch-calls 스펙 §4.3·§4.5, DoD-22·23). `approve-required`는 `swap-pending`,
+ * `batch-ready`는 `batch`, 그 밖은 `null`(안내 줄 없음)이다.
+ */
+export function getNetworkFeeNote(state: PrimaryButtonState): NetworkFeeNote | null {
+  if (state === "approve-required") return "swap-pending";
+  if (state === "batch-ready") return "batch";
+  return null;
 }
 
 // ─── 추정 요청 조립 ─────────────────────────────────────────────────

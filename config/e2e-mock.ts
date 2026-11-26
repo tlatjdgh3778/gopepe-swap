@@ -1,7 +1,15 @@
 // E2E 빌드(`NEXT_PUBLIC_E2E_MOCK=1`) 전용 모듈이다.
 // `config/wagmi.ts`가 정적 플래그 분기 안에서만 가져오므로 플래그 없는 빌드에는 포함되지 않는다.
 // 이 파일 밖에서 이 모듈을 정적으로 import하지 않는다.
-import { type Address, type Hex, UserRejectedRequestError } from "viem";
+import {
+  type Address,
+  type Hex,
+  UserRejectedRequestError,
+  encodeFunctionData,
+  keccak256,
+  parseAbi,
+  stringToHex,
+} from "viem";
 
 import { mainnet } from "viem/chains";
 import { type Config, type CreateConnectorFn, createConnector, mock } from "wagmi";
@@ -30,6 +38,15 @@ export type GopepeE2EControl = {
   // 요청은 `walletRequests`에 기록된 뒤 실패하며 anvil로 보내지 않는다.
   // 전송 시점마다 읽으므로 페이지 로드 전(addInitScript)이나 후에 바꿀 수 있다.
   sendTransactionError?: boolean | Error;
+  // 배치 실행(EIP-5792) opt-in(batch-calls 스펙 §4.4). 기본 꺼짐이고 `true`일 때만 다음처럼 동작한다.
+  // - `wallet_getCapabilities`: 요청 체인 목록에 Ethereum(0x1)이 있으면 0x1의 `atomic.status = "supported"`를 보고한다.
+  // - `wallet_sendCalls`(Ethereum만): calls를 Simple7702Account `executeBatch(calls)` 자기 호출 트랜잭션 1건으로 anvil에 보낸다.
+  //   계정에 Simple7702Account 위임 표식을 두는 일은 러너가 한다(이 모듈은 두지 않는다).
+  // - `wallet_getCallsStatus`: 그 트랜잭션 receipt가 없으면 100, receipt status `0x1`이면 200, `0x0`이면 500.
+  // 꺼져 있으면 세 메서드 모두 mock 커넥터 기본 동작이다. 요청 시점마다 읽으므로 앱 연결 전(addInitScript)에 켠다.
+  // 이 래퍼가 내부로 보내는 `eth_sendTransaction`·`eth_getTransactionReceipt`는 `walletRequests`에 기록하지 않고
+  // `sendTransactionError`에도 걸리지 않는다.
+  atomicBatch?: boolean;
   // mock 커넥터가 지갑 provider로 받은 요청 기록(연결, 체인 전환 등).
   walletRequests: GopepeE2EWalletRequest[];
   // mock 커넥터의 계정 주소.
@@ -83,6 +100,46 @@ export function withE2EChains(chains: typeof SUPPORTED_CHAINS): typeof SUPPORTED
 // `sendTransactionError` 제어값이 막는 지갑 전송 메서드.
 const SEND_TRANSACTION_METHODS = new Set(["eth_sendTransaction", "wallet_sendTransaction"]);
 
+// ─── 배치 opt-in(`atomicBatch`) ─────────────────────────────────────
+
+// 배치를 지원한다고 보고하는 유일한 체인(Ethereum, anvil 포크).
+const BATCH_CHAIN_ID_HEX: Hex = "0x1";
+
+// eth-infinitism Simple7702Account `executeBatch((address target,uint256 value,bytes data)[])`(셀렉터 0x34fcd5be).
+// 위임 대상 `0x4Cd241E8d1510e30b2076397afc7508Ae59C66c9`은 러너가 계정에 위임 표식으로 둔다.
+const simple7702AccountAbi = parseAbi([
+  "struct Call { address target; uint256 value; bytes data; }",
+  "function executeBatch(Call[] calls)",
+]);
+
+// `executeBatch` 자기 호출 트랜잭션의 명시 gas(1,000,000). revert 표본도 가스 추정 없이 보낸다.
+const BATCH_TRANSACTION_GAS: Hex = "0xf4240";
+
+type WalletSendCallsParams = [
+  {
+    from?: Address;
+    chainId?: Hex;
+    calls: { to: Address; data?: Hex; value?: Hex }[];
+  },
+];
+
+type RpcReceipt = {
+  blockHash: Hex;
+  blockNumber: Hex;
+  gasUsed: Hex;
+  logs: unknown[];
+  status: Hex;
+  transactionHash: Hex;
+};
+
+function isBatchChain(chainId: unknown): boolean {
+  return typeof chainId === "string" && Number(chainId) === Number(BATCH_CHAIN_ID_HEX);
+}
+
+function isAtomicBatchEnabled(): boolean {
+  return typeof window !== "undefined" && window.__GOPEPE_E2E__?.atomicBatch === true;
+}
+
 export function createE2EMockConnector(): CreateConnectorFn {
   const features = {
     // 새로고침 전에 연결돼 있었으면 연결된 상태로 시작해 복원(reconnect)되게 한다.
@@ -97,6 +154,8 @@ export function createE2EMockConnector(): CreateConnectorFn {
   // mock 커넥터에 연결 여부 기록과 지갑 요청 기록을 덧붙인다. `this`는 wagmi가 만든 최종 커넥터 객체다.
   const wrappedConnector: typeof baseConnector = (config) => {
     const inner = baseConnector(config);
+    // 배치 id → `executeBatch` 트랜잭션 해시. 연결(페이지) 수명 동안만 유지한다.
+    const batches = new Map<string, Hex>();
     return {
       ...inner,
       async connect(parameters) {
@@ -110,6 +169,81 @@ export function createE2EMockConnector(): CreateConnectorFn {
       },
       async getProvider(parameters) {
         const provider = await inner.getProvider.call(this, parameters);
+        // 배치 처리용 내부 요청. Ethereum(anvil) provider로 직접 보내 `walletRequests`·`sendTransactionError`를 거치지 않는다.
+        const requestBatchChain = async <T>(method: string, params: unknown[]): Promise<T> => {
+          const chainProvider = await inner.getProvider.call(this, { chainId: mainnet.id });
+          return (await chainProvider.request({ method, params } as never)) as T;
+        };
+        const handleAtomicBatch = async (
+          args: GopepeE2EWalletRequest,
+        ): Promise<{ handled: true; result: unknown } | { handled: false }> => {
+          if (args.method === "wallet_getCapabilities") {
+            const [, chainIds] = (args.params ?? []) as [Address?, Hex[]?];
+            if (chainIds && !chainIds.some(isBatchChain)) return { handled: true, result: {} };
+            return {
+              handled: true,
+              result: { [BATCH_CHAIN_ID_HEX]: { atomic: { status: "supported" } } },
+            };
+          }
+          if (args.method === "wallet_sendCalls") {
+            const [batch] = args.params as WalletSendCallsParams;
+            if (!isBatchChain(batch.chainId)) {
+              throw new Error("E2E mock batch is only supported on Ethereum (0x1).");
+            }
+            const from = batch.from ?? E2E_MOCK_ACCOUNT;
+            const data = encodeFunctionData({
+              abi: simple7702AccountAbi,
+              functionName: "executeBatch",
+              args: [
+                batch.calls.map((call) => ({
+                  target: call.to,
+                  value: BigInt(call.value ?? "0x0"),
+                  data: call.data ?? "0x",
+                })),
+              ],
+            });
+            const hash = await requestBatchChain<Hex>("eth_sendTransaction", [
+              { from, to: from, data, gas: BATCH_TRANSACTION_GAS },
+            ]);
+            const id = keccak256(stringToHex(JSON.stringify([hash])));
+            batches.set(id, hash);
+            return { handled: true, result: { id } };
+          }
+          if (args.method === "wallet_getCallsStatus") {
+            const [id] = args.params as [string];
+            const hash = batches.get(id);
+            if (hash === undefined) throw new Error("E2E mock batch id is unknown.");
+            const receipt = await requestBatchChain<RpcReceipt | null>(
+              "eth_getTransactionReceipt",
+              [hash],
+            );
+            const status = receipt === null ? 100 : receipt.status === "0x1" ? 200 : 500;
+            return {
+              handled: true,
+              result: {
+                version: "2.0.0",
+                id,
+                chainId: BATCH_CHAIN_ID_HEX,
+                atomic: true,
+                status,
+                receipts:
+                  receipt === null
+                    ? []
+                    : [
+                        {
+                          blockHash: receipt.blockHash,
+                          blockNumber: receipt.blockNumber,
+                          gasUsed: receipt.gasUsed,
+                          logs: receipt.logs,
+                          status: receipt.status,
+                          transactionHash: receipt.transactionHash,
+                        },
+                      ],
+              },
+            };
+          }
+          return { handled: false };
+        };
         const request = (async (args: GopepeE2EWalletRequest, options?: unknown) => {
           if (typeof window !== "undefined") {
             const control = getControl();
@@ -120,6 +254,10 @@ export function createE2EMockConnector(): CreateConnectorFn {
                 throw new UserRejectedRequestError(new Error("Failed to send transaction."));
               }
               throw sendTransactionError;
+            }
+            if (isAtomicBatchEnabled()) {
+              const batchResult = await handleAtomicBatch(args);
+              if (batchResult.handled) return batchResult.result as never;
             }
           }
           return provider.request(args as never, options as never);

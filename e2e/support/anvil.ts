@@ -394,3 +394,11 @@ export function wrapWarmUpRequest(weth: Address, amount: bigint): EstimateWarmUp
     value: amount,
   };
 }
+
+// ─── 계정 코드 설정 (F11 batch-calls T-13) ─────────────────────────
+
+// 계정 코드를 `anvil_setCode`로 주어진 값으로 바꾼다(예: EIP-7702 위임 표식 `0xef0100` + 위임 대상 주소).
+// snapshot을 잡은 뒤 준비 단계에서만 쓰고, revert로 되돌린다.
+export async function setAccountCode(account: Address, code: Hex): Promise<void> {
+  await anvilRpc("anvil_setCode", [account, code]);
+}
