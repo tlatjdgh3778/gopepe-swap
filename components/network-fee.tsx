@@ -3,7 +3,7 @@
 import { type NetworkFeeKind, formatEthFee } from "@/lib/network-fee";
 import { formatUsd } from "@/lib/token-usd-price";
 import { cn } from "@/lib/utils";
-import { useNetworkFee } from "@/providers/network-fee-provider";
+import { useNetworkFee, useNetworkFeeNote } from "@/providers/network-fee-provider";
 
 // 수수료 행 라벨 뒤 kind 문구(F10 스펙 §1.1). wrap·unwrap은 `전환`이다.
 const KIND_LABELS: Record<NetworkFeeKind, string> = {
@@ -18,6 +18,8 @@ const FEE_UNAVAILABLE_SYMBOL = "—";
 const FEE_UNAVAILABLE_LABEL = "수수료를 추정할 수 없음";
 
 const SWAP_PENDING_TEXT = "스왑 수수료는 승인 후에 계산돼요";
+// 배치(approve + swap)일 때 스왑 수수료 안내(batch-calls 스펙 §1.1).
+const BATCH_NOTE_TEXT = "스왑 수수료는 지갑에서 확인해 주세요";
 const ETH_SHORTAGE_TEXT =
   "수수료를 낼 ETH가 부족해요. 지갑이 다른 토큰으로 수수료를 내면 그 토큰 잔액이 줄 수 있어요.";
 const FEE_EXCEEDS_AMOUNT_TEXT = "수수료가 보내는 금액보다 커요";
@@ -53,10 +55,12 @@ function NetworkFeeSkeleton() {
  * - 값: `success`이면 `0.00042 ETH ($1.23)`(ETH 단가가 없으면 `0.00042 ETH`), `loading`이면 `network-fee-skeleton`,
  *   `error`이면 접근성 이름 `수수료를 추정할 수 없음`인 `—`다.
  * - 경고(`severity=warning`)이면 값과 경고 줄(`network-fee-warning`)이 `--warning` 색이다.
- * - approve 단계면 `network-fee-swap-pending`, ETH 부족이면 상태와 관계없이 `network-fee-eth-shortage`를 보인다.
+ * - 주 버튼이 `approve-required`면 `network-fee-swap-pending`, `batch-ready`면 `network-fee-batch-note`를 보인다
+ *   (batch-calls 스펙 §4.3·§4.5). ETH 부족이면 상태와 관계없이 `network-fee-eth-shortage`를 보인다.
  */
 export function NetworkFee() {
   const fee = useNetworkFee();
+  const note = useNetworkFeeNote();
   if (fee.status === "idle") return null;
 
   const success = fee.status === "success" ? fee : null;
@@ -102,9 +106,14 @@ export function NetworkFee() {
           {getWarningText(success.ratioPercent)}
         </p>
       )}
-      {fee.kind === "approve" && (
+      {note === "swap-pending" && (
         <p data-testid="network-fee-swap-pending" className="text-muted-foreground">
           {SWAP_PENDING_TEXT}
+        </p>
+      )}
+      {note === "batch" && (
+        <p data-testid="network-fee-batch-note" className="text-muted-foreground">
+          {BATCH_NOTE_TEXT}
         </p>
       )}
       {fee.ethShortage && (

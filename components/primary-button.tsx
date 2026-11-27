@@ -13,15 +13,19 @@ import {
   getPrimaryButtonStateParams,
   isPrimaryButtonEnabled,
 } from "@/lib/primary-button-state";
+import { useBatchCapability } from "@/providers/batch-capability-provider";
 import { useSwapExecution } from "@/providers/swap-execution-provider";
 import { useSwapForm, useSwapFormBalances } from "@/providers/swap-form-provider";
 import { useSwapQuote } from "@/providers/swap-quote-provider";
 import { useTokenAllowance } from "@/providers/token-allowance-provider";
 
-// F2·F5·F7 스펙 §1.1 문구. `approve-required`는 보내는 토큰 심볼 뒤에 ` 승인`을 붙인다.
-// ETH가 낀 스왑도 ERC-20 페어와 같은 문구다(F7 §1.1).
+// F2·F5·F7·batch-calls 스펙 §1.1 문구. `approve-required`는 보내는 토큰 심볼 뒤에 ` 승인`을,
+// `batch-ready`는 ` 승인 후 스왑`을 붙인다. ETH가 낀 스왑도 ERC-20 페어와 같은 문구다(F7 §1.1).
 // `restoring`·`disconnected`는 아이콘이 있는 버튼으로 따로 그리므로 여기서는 쓰지 않는다.
-const STATE_LABELS: Record<Exclude<PrimaryButtonState, "approve-required">, string> = {
+const STATE_LABELS: Record<
+  Exclude<PrimaryButtonState, "approve-required" | "batch-ready">,
+  string
+> = {
   restoring: RESTORING_LABEL,
   disconnected: "지갑 연결",
   "awaiting-signature": "지갑에서 확인",
@@ -29,6 +33,7 @@ const STATE_LABELS: Record<Exclude<PrimaryButtonState, "approve-required">, stri
   swapping: "스왑 중…",
   wrapping: "전환 중…",
   unwrapping: "전환 중…",
+  batching: "스왑 중…",
   "select-token": "토큰 선택",
   "enter-amount": "금액 입력",
   "insufficient-balance": "잔액 부족",
@@ -55,7 +60,8 @@ export function PrimaryButton() {
   const quote = useSwapQuote();
   const amountOutMinimum = useAmountOutMinimum();
   const allowance = useTokenAllowance();
-  const { phase, approve, swap, wrap, unwrap } = useSwapExecution();
+  const { phase, approve, swap, wrap, unwrap, batch } = useSwapExecution();
+  const { available: batchAvailable } = useBatchCapability();
 
   if (wallet.status === "restoring") {
     return (
@@ -99,17 +105,21 @@ export function PrimaryButton() {
       quote,
       amountOutMinimum,
       allowance,
+      batchAvailable,
     }),
   );
 
   const label =
     buttonState === "approve-required"
       ? `${tokenIn?.symbol ?? ""} 승인`
-      : STATE_LABELS[buttonState];
+      : buttonState === "batch-ready"
+        ? `${tokenIn?.symbol ?? ""} 승인 후 스왑`
+        : STATE_LABELS[buttonState];
 
   // 연타는 `useSwapExecution()`의 잠금이 한 번으로 막는다(EC-6).
   const onClick = () => {
-    if (buttonState === "approve-required") void approve();
+    if (buttonState === "batch-ready") void batch();
+    else if (buttonState === "approve-required") void approve();
     else if (buttonState === "swap-ready") void swap();
     else if (buttonState === "wrap-ready") void wrap();
     else if (buttonState === "unwrap-ready") void unwrap();

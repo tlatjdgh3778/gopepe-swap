@@ -21,12 +21,13 @@ import { useSwapExecution } from "@/providers/swap-execution-provider";
 // 스펙 §4.3 `tx-status[data-status]`.
 type TxStatusView = "none" | "pending" | TxResultStatus;
 
-// F6·F7 스펙 §1.1 문구. 금액·토큰 심볼을 넣지 않는다. wrap·unwrap은 같은 문구다.
+// F6·F7·batch-calls 스펙 §1.1 문구. 금액·토큰 심볼을 넣지 않는다. wrap·unwrap은 같은 문구다.
 const PENDING_MESSAGES: Record<TxKind, string> = {
   approve: "승인 트랜잭션을 처리하는 중이에요",
   swap: "스왑 트랜잭션을 처리하는 중이에요",
   wrap: "전환 트랜잭션을 처리하는 중이에요",
   unwrap: "전환 트랜잭션을 처리하는 중이에요",
+  batch: "승인과 스왑을 처리하는 중이에요",
 };
 
 const SUCCESS_MESSAGES: Record<TxKind, string> = {
@@ -34,14 +35,17 @@ const SUCCESS_MESSAGES: Record<TxKind, string> = {
   swap: "스왑이 완료됐어요",
   wrap: "전환이 완료됐어요",
   unwrap: "전환이 완료됐어요",
+  batch: "스왑이 완료됐어요",
 };
 
-// 트랜잭션 해시를 받은 뒤 영수증을 기다리는 phase. 이때 pending을 표시한다(F6 DoD-1, F7 DoD-30).
+// 트랜잭션 해시(배치는 배치 id)를 받은 뒤 결과를 기다리는 phase. 이때 pending을 표시한다
+// (F6 DoD-1, F7 DoD-30, batch-calls DoD-14).
 const PENDING_PHASES: ReadonlySet<SwapExecutionPhase> = new Set([
   "approving",
   "swapping",
   "wrapping",
   "unwrapping",
+  "batching",
 ]);
 
 const FAILURE_MESSAGES: Record<Exclude<TxResultStatus, "success">, string> = {
@@ -72,9 +76,10 @@ type Display = {
 /**
  * 주 버튼 아래 트랜잭션 상태 메시지 영역(스펙 §1.1, §4.3).
  * 루트 요소 하나를 항상 마운트하고 상태가 바뀌어도 같은 노드를 유지한다. role은 `status`이고 `alert`는 쓰지 않는다.
- * 표시 우선순위: `approving`·`swapping`·`wrapping`·`unwrapping`의 pending → `result` → `none`.
- * 잔액 감소 안내(`balanceDropped`)는 approve 성공 결과에만 있다.
+ * 표시 우선순위: `approving`·`swapping`·`wrapping`·`unwrapping`·`batching`의 pending → `result` → `none`.
+ * 잔액 감소 안내(`balanceDropped`)는 approve 성공 결과에만 있다(batch 결과에는 없다, batch-calls DoD-20).
  * 링크 체인·해시는 pending이면 `pendingTx`, 결과면 `result`의 값이다(스펙 §4.2).
+ * 해시가 없으면 링크가 없다. 배치 pending과 receipt 없이 끝난 배치 결과가 그렇다(batch-calls DoD-15, EC-17).
  */
 export function TxStatus() {
   const { phase, pendingTx, result, dismissResult } = useSwapExecution();
@@ -93,7 +98,8 @@ export function TxStatus() {
       status: "pending",
       kind: pendingTx.kind,
       message: PENDING_MESSAGES[pendingTx.kind],
-      tx: { chainId: pendingTx.chainId, hash: pendingTx.hash },
+      tx:
+        pendingTx.hash === undefined ? null : { chainId: pendingTx.chainId, hash: pendingTx.hash },
       dismissible: false,
       balanceDropped: false,
     };
@@ -105,7 +111,10 @@ export function TxStatus() {
         result.status === "success"
           ? SUCCESS_MESSAGES[result.kind]
           : FAILURE_MESSAGES[result.status],
-      tx: "hash" in result ? { chainId: result.chainId, hash: result.hash } : null,
+      tx:
+        "hash" in result && result.hash !== undefined
+          ? { chainId: result.chainId, hash: result.hash }
+          : null,
       dismissible: true,
       balanceDropped:
         result.kind === "approve" && "balanceDropped" in result && result.balanceDropped,

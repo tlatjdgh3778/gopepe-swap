@@ -22,10 +22,12 @@ import {
 import { useTokenUsdPrice } from "@/hooks/use-token-usd-price";
 import { useWalletRestore } from "@/hooks/use-wallet-restore";
 import {
+  type NetworkFeeNote,
   type NetworkFeeState,
   type NetworkFeeTxRequest,
   buildNetworkFeeTxRequest,
   getNetworkFeeKind,
+  getNetworkFeeNote,
   getNetworkFeeSeverity,
   getNetworkFeeValueWei,
   isEthLikeToken,
@@ -36,6 +38,7 @@ import { getApproveAmount, getSwapDeadline } from "@/lib/swap-transaction";
 import { isNativeToken } from "@/lib/token-amount";
 import { toUsdMicros } from "@/lib/token-usd-price";
 
+import { useBatchCapability } from "./batch-capability-provider";
 import { useSelectedChain } from "./selected-chain-provider";
 import { useSwapExecution } from "./swap-execution-provider";
 import { useSwapForm, useSwapFormBalances } from "./swap-form-provider";
@@ -46,12 +49,15 @@ import { type TokenAllowanceState, useTokenAllowance } from "./token-allowance-p
 const IDLE: NetworkFeeState = { status: "idle" };
 
 const NetworkFeeContext = createContext<NetworkFeeState | null>(null);
+// 수수료 행 안내 줄. `NetworkFeeState`(F10 §4.1)를 바꾸지 않으려고 따로 둔다. `undefined`는 provider 밖이다.
+const NetworkFeeNoteContext = createContext<NetworkFeeNote | null | undefined>(undefined);
 
 /**
  * 주 버튼이 다음에 보낼 트랜잭션의 네트워크 수수료 상태(F10 스펙 §4.1)를 정한다.
- * - 주 버튼 상태는 `PrimaryButton`과 같은 입력으로 다시 계산하고, `approve-required`·`swap-ready`·`wrap-ready`·
- *   `unwrap-ready`만 kind로 바꾼다. 그 밖(미연결, 실행 phase 진행 중 포함)은 `idle`이고 F10 요청을 보내지 않는다
- *   (DoD-12, DoD-53, EC-7·8·9).
+ * - 주 버튼 상태는 `PrimaryButton`과 같은 입력(배치 가능 여부 포함)으로 다시 계산하고, `batch-ready`·`approve-required`·
+ *   `swap-ready`·`wrap-ready`·`unwrap-ready`만 kind로 바꾼다(`batch-ready`는 approve, batch-calls §4.5). 그 밖(미연결,
+ *   실행 phase 진행 중 포함)은 `idle`이고 F10 요청을 보내지 않는다(DoD-12, DoD-53, EC-7·8·9).
+ * - 안내 줄(`useNetworkFeeNote()`)은 수수료 행이 있을 때 같은 주 버튼 상태로 정한다(batch-calls DoD-22·23).
  * - 추정 요청은 주 버튼이 보낼 트랜잭션과 같은 함수로 추정 시점에 한 번 조립한다(DoD-1~3, EC-14).
  * - 상태는 값 우선이다. 현재 키의 추정 값과 가스 가격 값이 있으면 `success`(다시 읽는 중·다시 읽기 실패 포함, EC-6),
  *   없고 어느 쪽이든 실패했으면 `error`, 그 밖에는 `loading`이다(EC-1·2·3).
@@ -62,6 +68,7 @@ const NetworkFeeContext = createContext<NetworkFeeState | null>(null);
 export function NetworkFeeProvider({ children }: { children: ReactNode }) {
   const { status: walletStatus, address: account } = useWalletRestore();
   const { phase } = useSwapExecution();
+  const { available: batchAvailable } = useBatchCapability();
   const { chainId, tokenIn, tokenOut, amountInRaw } = useSwapForm();
   const balances = useSwapFormBalances();
   const quote = useSwapQuote();
@@ -97,6 +104,7 @@ export function NetworkFeeProvider({ children }: { children: ReactNode }) {
       quote,
       amountOutMinimum,
       allowance,
+      batchAvailable,
     }),
   );
 
@@ -105,6 +113,7 @@ export function NetworkFeeProvider({ children }: { children: ReactNode }) {
     stateKind !== null && account !== undefined && tokenIn && tokenOut && amountInRaw !== null
       ? stateKind
       : null;
+  const note = kind !== null ? getNetworkFeeNote(primaryState) : null;
 
   // 추정 시점의 최신 최소 수령량·allowance. 키에 넣지 않는다(DoD-35).
   const latestRef = useRef({ amountOutMinimum, allowance: allowance.allowance });
@@ -240,12 +249,25 @@ export function NetworkFeeProvider({ children }: { children: ReactNode }) {
     ethBalance,
   ]);
 
-  return <NetworkFeeContext.Provider value={value}>{children}</NetworkFeeContext.Provider>;
+  return (
+    <NetworkFeeContext.Provider value={value}>
+      <NetworkFeeNoteContext.Provider value={note}>{children}</NetworkFeeNoteContext.Provider>
+    </NetworkFeeContext.Provider>
+  );
 }
 
 // F10 스펙 §4.1 네트워크 수수료 상태.
 export function useNetworkFee(): NetworkFeeState {
   const value = useContext(NetworkFeeContext);
   if (!value) throw new Error("useNetworkFee must be used within NetworkFeeProvider");
+  return value;
+}
+
+// 수수료 행 안내 줄 종류(batch-calls 스펙 §4.3). 주 버튼이 `approve-required`면 `swap-pending`,
+// `batch-ready`면 `batch`, 그 밖이나 수수료가 `idle`이면 `null`이다.
+export function useNetworkFeeNote(): NetworkFeeNote | null {
+  const value = useContext(NetworkFeeNoteContext);
+  if (value === undefined)
+    throw new Error("useNetworkFeeNote must be used within NetworkFeeProvider");
   return value;
 }

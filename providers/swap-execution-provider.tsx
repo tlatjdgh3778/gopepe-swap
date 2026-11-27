@@ -15,7 +15,7 @@ import {
 import { type Address, type Hash, type ReplacementReason, erc20Abi } from "viem";
 import { waitForTransactionReceipt } from "viem/actions";
 import { useConfig } from "wagmi";
-import { writeContract } from "wagmi/actions";
+import { sendCalls, waitForCallsStatus, writeContract } from "wagmi/actions";
 
 import type { SupportedChainId } from "@/config/chains";
 
@@ -26,6 +26,7 @@ import { useEnsureChain } from "@/hooks/use-ensure-chain";
 import { CARD_BALANCE_QUERY_KEY, getCardBalanceQueryKey } from "@/hooks/use-token-balance";
 import { invalidateTokenAllowance } from "@/hooks/use-token-allowance-read";
 import { useWalletRestore } from "@/hooks/use-wallet-restore";
+import { buildBatchCalls } from "@/lib/batch-calls";
 import {
   type PrimaryButtonState,
   type SwapExecutionPhase,
@@ -41,16 +42,22 @@ import {
 } from "@/lib/swap-transaction";
 import { readTokenBalance } from "@/lib/token-balances";
 import {
+  type BatchStatusOutcome,
   type ReceiptOutcome,
+  type SingleTxKind,
   type TxKind,
   type TxResult,
+  classifyBatchSendError,
   classifyChainSwitchError,
   classifySendError,
+  getBatchStatusOutcome,
   getReceiptFailedOutcome,
   getReceiptOutcome,
   isBalanceDropped,
+  isBatchStatusFinal,
 } from "@/lib/tx-result";
 
+import { useBatchCapability } from "./batch-capability-provider";
 import { useSelectedChain } from "./selected-chain-provider";
 import {
   useSwapForm,
@@ -61,15 +68,14 @@ import {
 import { useSwapQuote } from "./swap-quote-provider";
 import { useTokenAllowance } from "./token-allowance-provider";
 
-export type PendingTx = {
-  kind: TxKind;
-  chainId: SupportedChainId;
-  hash: Hash;
-};
+// batch-calls 스펙 §4.2. batch 분기의 `hash?: undefined`는 기존 `pendingTx.hash` 접근이 그대로 컴파일되게 한다(§4.5).
+export type PendingTx =
+  | { kind: SingleTxKind; chainId: SupportedChainId; hash: Hash }
+  | { kind: "batch"; chainId: SupportedChainId; batchId: string; hash?: undefined };
 
 export type { TxKind, TxResult } from "@/lib/tx-result";
 
-// 트랜잭션 해시를 받은 뒤 영수증이 나올 때까지의 phase(F5 DoD-18, F7 DoD-27·28).
+// 트랜잭션 해시(배치는 배치 id)를 받은 뒤 결과가 나올 때까지의 phase(F5 DoD-18, F7 DoD-27·28, batch-calls DoD-13).
 const PENDING_PHASE_BY_KIND: Record<
   TxKind,
   Exclude<SwapExecutionPhase, "idle" | "awaiting-signature">
@@ -78,12 +84,14 @@ const PENDING_PHASE_BY_KIND: Record<
   swap: "swapping",
   wrap: "wrapping",
   unwrap: "unwrapping",
+  batch: "batching",
 };
 
-// F7 스펙 §4.2 `useSwapExecution()`(F5 스펙 §4.2에 F6 스펙 §4.1의 `result`·`dismissResult`, F7의 `wrap`·`unwrap`을 더했다).
-// `pendingTx`는 `phase`가 `approving`·`swapping`·`wrapping`·`unwrapping`일 때만 `null`이 아니고,
-// 결과가 나올 때까지 지갑이 돌려준 원 해시다.
-// `approve`·`swap`·`wrap`·`unwrap`은 reject하지 않고 `void`로 resolve한다. 실행 결과는 `result`로 드러난다.
+// F7 스펙 §4.2 `useSwapExecution()`(F5 스펙 §4.2에 F6 스펙 §4.1의 `result`·`dismissResult`, F7의 `wrap`·`unwrap`,
+// batch-calls 스펙 §4.2의 `batch`를 더했다).
+// `pendingTx`는 `phase`가 `approving`·`swapping`·`wrapping`·`unwrapping`·`batching`일 때만 `null`이 아니고,
+// 결과가 나올 때까지 지갑이 돌려준 원 해시(배치는 배치 id)다.
+// `approve`·`swap`·`wrap`·`unwrap`·`batch`는 reject하지 않고 `void`로 resolve한다. 실행 결과는 `result`로 드러난다.
 export type SwapExecutionValue = {
   phase: SwapExecutionPhase;
   pendingTx: PendingTx | null;
@@ -92,6 +100,7 @@ export type SwapExecutionValue = {
   swap: () => Promise<void>;
   wrap: () => Promise<void>;
   unwrap: () => Promise<void>;
+  batch: () => Promise<void>;
   dismissResult: () => void;
 };
 
@@ -133,6 +142,10 @@ const SwapExecutionContext = createContext<SwapExecutionValue | null>(null);
  * - revert·영수증 대기 reject·교체: allowance와 잔액을 무효화하고 기다리지 않은 채 결과를 기록하고 `idle`로 돌아간다(EC-4, EC-5, F6 EC-7·8·9·11).
  * - 트랜잭션을 보내지 못한 종료는 다시 읽지 않고 `idle`로 돌아간다. 체인 확인 단계 오류는 `rejected`·`chain-switch-failed`,
  *   전송 단계 오류는 `rejected`·`send-failed`로 기록하고(F6 EC-1~4), 체인 불일치(EC-21)는 결과 없이 끝난다(F6 EC-6).
+ * - batch(batch-calls 스펙): 클릭 시점 주 버튼이 `batch-ready`일 때만 approve와 swap을 `wallet_sendCalls` 한 번으로
+ *   보낸다(`forceAtomic: true`, `experimental_fallback` 없음). 체인 확인·체인 비교 단계는 다른 kind와 같다(DoD-11, EC-11).
+ *   배치 미지원 code로 실패하면 그 계정·체인을 강등한다(EC-7·8). 배치 id를 받으면 `batching`이고, 상태 코드가 1xx가 아닐 때까지
+ *   시간 제한 없이 기다린다(EC-18). 성공 후처리는 swap 성공과 같고 `balanceDropped`가 없다(DoD-18·19·20).
  * - 진행 중 연결 계정이 바뀌거나 연결이 해제되면 실행 세대를 올려 `idle`로 돌아가고 그 실행의 늦은 결과는 버린다(EC-10, F6 EC-24).
  * - 결과는 `dismissResult`, 실행 시작, 계정 변경·해제, 금액·토큰 값을 실제로 바꾼 사용자 동작, 선택 체인 값 변경으로만 지운다
  *   (F6 DoD-13·14·15, EC-25). 슬리피지와 시간으로는 지우지 않는다(F6 EC-19·20).
@@ -150,6 +163,7 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
   const amountOutMinimum = useAmountOutMinimum();
   const allowance = useTokenAllowance();
   const ensureChain = useEnsureChain();
+  const { available: batchAvailable, markUnsupported } = useBatchCapability();
 
   const [execution, setExecution] = useState<ExecutionState>(IDLE_EXECUTION);
 
@@ -171,10 +185,11 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
       quote,
       amountOutMinimum,
       allowance,
+      batchAvailable,
     }),
   );
 
-  // 호출 시점의 최신 값. approve·swap·wrap·unwrap은 렌더 시점이 아니라 이 값을 읽는다.
+  // 호출 시점의 최신 값. approve·swap·wrap·unwrap·batch는 렌더 시점이 아니라 이 값을 읽는다.
   const latest = {
     primaryState,
     chainId,
@@ -254,7 +269,7 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
 
   const execute = useCallback(
     async (
-      kind: TxKind,
+      kind: SingleTxKind,
       txChainId: SupportedChainId,
       txAccount: Address,
       send: () => Promise<Hash>,
@@ -525,9 +540,182 @@ export function SwapExecutionProvider({ children }: { children: ReactNode }) {
     );
   }, [config, execute]);
 
+  // approve + swap 배치(batch-calls 스펙 §3.2·§3.3). 잠금·세대·체인 확인 단계는 `execute`와 같고,
+  // 전송은 `wallet_sendCalls`, 결과는 `wallet_getCallsStatus` 상태 코드로 정한다.
+  const executeBatch = useCallback(
+    async (
+      txChainId: SupportedChainId,
+      txAccount: Address,
+      send: () => Promise<string>,
+    ): Promise<void> => {
+      const generation = generationRef.current + 1;
+      generationRef.current = generation;
+      lockRef.current = true;
+      // 실행 시작은 이전 결과를 지운다. 배치 id를 받기 전에는 `awaiting-signature`다(DoD-12).
+      setExecution({
+        phase: "awaiting-signature",
+        pendingTx: null,
+        account: txAccount,
+        result: null,
+      });
+
+      const isCurrent = () => generationRef.current === generation;
+      // 결과 기록과 `idle` 전환을 한 번에 한다. 세대가 바뀐 실행은 기록하지 않는다.
+      const finish = (txResult: TxResult | null) => {
+        if (!isCurrent()) return;
+        lockRef.current = false;
+        setExecution(
+          txResult === null
+            ? IDLE_EXECUTION
+            : { phase: "idle", pendingTx: null, account: txAccount, result: txResult },
+        );
+      };
+
+      // 체인 확인 단계. 실패하면 `rejected`·`chain-switch-failed`이고 `wallet_sendCalls`를 보내지 않는다(DoD-11, EC-11).
+      try {
+        await latestRef.current.ensureChain();
+      } catch (error) {
+        finish({ kind: "batch", status: classifyChainSwitchError(error) });
+        return;
+      }
+      if (!isCurrent()) return;
+      // 선택 체인이 클릭 시점 체인과 다르면 보내지 않고 결과 없이 끝낸다(F5 EC-21과 같다).
+      if (getSelectedChainId() !== txChainId) {
+        finish(null);
+        return;
+      }
+
+      // 전송 단계. 4001은 `rejected`(EC-5·6), 배치 미지원 code는 `send-failed`와 강등(EC-7·8·9),
+      // 그 밖은 `send-failed`(EC-10)다. approve를 대신 보내지 않는다.
+      let batchId: string;
+      try {
+        batchId = await send();
+      } catch (error) {
+        if (!isCurrent()) return;
+        const { status, unsupported } = classifyBatchSendError(error);
+        if (unsupported) markUnsupported(txChainId, txAccount);
+        finish({ kind: "batch", status });
+        return;
+      }
+      if (!isCurrent()) return;
+
+      setExecution({
+        phase: PENDING_PHASE_BY_KIND.batch,
+        pendingTx: { kind: "batch", chainId: txChainId, batchId },
+        account: txAccount,
+        result: null,
+      });
+
+      // 상태 대기. 1xx가 아닐 때 끝내고(viem 기본 종료 조건은 201~299를 끝내지 않는다) 시간 제한은 없다(EC-18).
+      // `wallet_getCallsStatus` throw는 viem 기본 재시도 뒤 `receipt-failed`다(EC-16).
+      let outcome: BatchStatusOutcome;
+      try {
+        const callsStatus = await waitForCallsStatus(config, {
+          id: batchId,
+          timeout: 0,
+          status: ({ statusCode }) => isBatchStatusFinal(statusCode),
+        });
+        // `status` 함수가 1xx에서 끝내지 않으므로 `null`(1xx)은 오지 않는다. 오면 확인 실패로 본다.
+        outcome = getBatchStatusOutcome(callsStatus.statusCode, callsStatus.receipts) ?? {
+          status: "receipt-failed",
+        };
+      } catch {
+        outcome = { status: "receipt-failed" };
+      }
+      if (!isCurrent()) return;
+
+      if (outcome.status === "send-failed") {
+        // 4xx(EC-15): 체인에 실행되지 않았다. 다시 읽기를 기다리지 않는다.
+        void invalidateCardBalances(txChainId, txAccount).catch(() => undefined);
+        void invalidateTokenAllowance(queryClient, txChainId, txAccount).catch(() => undefined);
+        finish({ kind: "batch", status: "send-failed" });
+        return;
+      }
+
+      const hashField = outcome.hash === undefined ? {} : { hash: outcome.hash };
+
+      if (outcome.status !== "success") {
+        // revert·확인 실패(EC-12~14, EC-16, EC-23·24): 다시 읽기를 기다리지 않고 금액도 비우지 않는다.
+        void invalidateCardBalances(txChainId, txAccount).catch(() => undefined);
+        void invalidateTokenAllowance(queryClient, txChainId, txAccount).catch(() => undefined);
+        finish({ kind: "batch", status: outcome.status, chainId: txChainId, ...hashField });
+        return;
+      }
+
+      // 성공(DoD-16·18·19, EC-22): swap 성공과 같다. `balanceDropped`가 없다(DoD-20).
+      const now = latestRef.current;
+      if (getSelectedChainId() === txChainId && now.account === txAccount) {
+        now.clearAmountInput();
+      }
+      void invalidateCardBalances(txChainId, txAccount).catch(() => undefined);
+      try {
+        await invalidateTokenAllowance(queryClient, txChainId, txAccount);
+      } catch {
+        // 다시 읽기 실패는 결과에 드러내지 않는다.
+      }
+      finish({ kind: "batch", status: "success", chainId: txChainId, ...hashField });
+    },
+    [config, queryClient, getSelectedChainId, invalidateCardBalances, markUnsupported],
+  );
+
+  // ERC-20 입력 스왑의 approve + swap을 `wallet_sendCalls` 한 번으로 보낸다(batch-calls DoD-7~11).
+  // calls는 클릭 시점 값으로 만들고 deadline만 전송 직전 시각으로 정한다. capability를 다시 읽지 않는다(EC-4).
+  const batch = useCallback(async (): Promise<void> => {
+    if (lockRef.current) return;
+    const snapshot = latestRef.current;
+    if (snapshot.primaryState !== "batch-ready") return;
+    const {
+      chainId: txChainId,
+      account: txAccount,
+      tokenIn: inToken,
+      tokenOut: outToken,
+      amountInRaw: amount,
+      quote: quoteState,
+      amountOutMinimum: minimum,
+    } = snapshot;
+    const currentAllowance = snapshot.allowance.allowance;
+    if (
+      !txAccount ||
+      !inToken ||
+      !outToken ||
+      amount === null ||
+      quoteState.status !== "success" ||
+      minimum === null ||
+      currentAllowance === null
+    ) {
+      return;
+    }
+
+    const fee = quoteState.quote.fee;
+
+    await executeBatch(txChainId, txAccount, async () => {
+      const calls = buildBatchCalls({
+        chainId: txChainId,
+        token: inToken.address,
+        allowance: currentAllowance,
+        swap: {
+          tokenOut: outToken,
+          fee,
+          account: txAccount,
+          amountInRaw: amount,
+          amountOutMinimum: minimum,
+          deadline: getSwapDeadline(Date.now()),
+        },
+      });
+      const { id } = await sendCalls(config, {
+        account: txAccount,
+        chainId: txChainId,
+        calls,
+        // 원자 실행을 요구한다(`atomicRequired: true`, DoD-9). 비원자 fallback은 쓰지 않는다.
+        forceAtomic: true,
+      });
+      return id;
+    });
+  }, [config, executeBatch]);
+
   const value = useMemo<SwapExecutionValue>(
-    () => ({ phase, pendingTx, result, approve, swap, wrap, unwrap, dismissResult }),
-    [phase, pendingTx, result, approve, swap, wrap, unwrap, dismissResult],
+    () => ({ phase, pendingTx, result, approve, swap, wrap, unwrap, batch, dismissResult }),
+    [phase, pendingTx, result, approve, swap, wrap, unwrap, batch, dismissResult],
   );
 
   return <SwapExecutionContext.Provider value={value}>{children}</SwapExecutionContext.Provider>;
